@@ -1,0 +1,25 @@
+{
+  "name": "promptforge",
+  "version": "2.0.0",
+  "description": "Local AI-powered prompt manager Chrome extension with Ollama integration.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest tests/ --forceExit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "eslint": "^9.23.0",
+    "globals": "^16.0.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "puppeteer": "^24.4.0"
+  },
+  "jest": {
+    "testEnvironment": "jest-environment-node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "transform": {}
+  }
+}

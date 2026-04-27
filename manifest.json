@@ -1,0 +1,69 @@
+{
+    "manifest_version": 3,
+    "name": "PromptForge",
+    "version": "2.0.0",
+    "description": "Local AI-powered prompt manager with versioning and Ollama integration.",
+    "permissions": [
+        "storage",
+        "tabs",
+        "scripting",
+        "activeTab",
+        "contextMenus",
+        "notifications"
+    ],
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    },
+    "action": {
+        "default_title": "Open PromptForge",
+        "default_popup": "popup.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "background": {
+        "service_worker": "service-worker.js",
+        "type": "module"
+    },
+    "host_permissions": [
+        "http://localhost:11434/*",
+        "http://127.0.0.1:11434/*",
+        "https://ollama.com/*"
+    ],
+    "optional_host_permissions": [
+        "<all_urls>"
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "icons/*",
+                "icon-nocircle.svg",
+                "info.html",
+                "promptStorage.js",
+                "utils.js",
+                "llm_providers.json",
+                "ollama-service.js",
+                "integration-manager.js",
+                "ai-operations.js",
+                "content.shared.js",
+                "content.styles.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
+    "commands": {
+        "_execute_action": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+P",
+                "mac": "Command+Shift+P"
+            },
+            "description": "Open PromptForge"
+        }
+    }
+}

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PromptForge</title>
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/popup.css">
+</head>
+<body>
+  <div id="popup">
+    <div class="popup-header">
+      <h1>PromptForge</h1>
+      <div class="popup-status" id="popup-status">
+        <span class="status-dot unknown"></span>
+        <span id="status-text">Checking…</span>
+      </div>
+    </div>
+    <div class="popup-search">
+      <input type="text" id="popup-search" placeholder="Search prompts…" autocomplete="off">
+    </div>
+    <div class="popup-list" id="popup-list"></div>
+    <div class="popup-footer">
+      <a href="#" id="open-app">Open App</a>
+    </div>
+  </div>
+  <div id="toast-container"></div>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

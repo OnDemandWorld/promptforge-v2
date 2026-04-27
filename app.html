@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PromptForge</title>
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/editor.css">
+  <link rel="stylesheet" href="css/library.css">
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <nav id="topnav" class="topnav">
+    <a href="#/library" class="topnav-brand">
+      <img src="icons/icon.svg" alt="PromptForge">
+      <span>PromptForge</span>
+    </a>
+    <div class="topnav-links">
+      <a href="#/library" class="topnav-link" data-route="library">Library</a>
+      <a href="#/editor" class="topnav-link" data-route="editor">New Prompt</a>
+      <a href="#/settings" class="topnav-link" data-route="settings">Settings</a>
+    </div>
+    <div class="topnav-right">
+      <div id="ollama-status" class="topnav-status">
+        <span class="status-dot unknown"></span>
+        <span id="ollama-status-text">Checking…</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content Area -->
+  <main id="main-content"></main>
+
+  <!-- Toast & Modal Containers -->
+  <div id="toast-container"></div>
+  <div id="modal-root"></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
