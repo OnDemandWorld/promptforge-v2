@@ -1989,8 +1989,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'PROMPTFORGE_SEND_PROMPT') {
     (async () => {
       try {
-        const { content, title } = message.prompt;
+        const { content, title, uuid } = message.prompt;
         if (!content) { sendResponse({ success: false, error: 'Empty content' }); return; }
+
+        const trackUse = async () => {
+          if (!uuid) return;
+          try {
+            chrome.storage.local.get({ prompts_storage: null }, (data) => {
+              const store = data.prompts_storage;
+              if (store && Array.isArray(store.prompts)) {
+                const idx = store.prompts.findIndex(p => p.uuid === uuid);
+                if (idx !== -1) {
+                  store.prompts[idx].useCount = (store.prompts[idx].useCount || 0) + 1;
+                  store.prompts[idx].lastUsedAt = new Date().toISOString();
+                  chrome.storage.local.set({ prompts_storage: store });
+                }
+              }
+            });
+          } catch { /* storage unavailable in this context, skip */ }
+        };
 
         // Extract variables
         const vars = PromptProcessor.extractVariables(content);
@@ -2005,6 +2022,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } else {
             await navigator.clipboard.writeText(content);
           }
+          trackUse();
           sendResponse({ success: true, injected: true });
           return;
         }
@@ -2016,6 +2034,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         if (!inputBox) {
           await navigator.clipboard.writeText(content);
+          trackUse();
           sendResponse({ success: true, clipboard: true });
           return;
         }
@@ -2027,6 +2046,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           onSubmit: async (values) => {
             const processed = PromptProcessor.replaceVariables(content, values);
             await InputBoxHandler.insertPrompt(inputBox, processed, null);
+            trackUse();
           }
         });
         sendResponse({ success: true, variables: true });

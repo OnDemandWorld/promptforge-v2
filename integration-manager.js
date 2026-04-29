@@ -10,7 +10,7 @@ async function _loadProviders() {
     const resp = await fetch(chrome.runtime.getURL('llm_providers.json'));
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    _providers = data.llm_providers.map((p, i) => ({
+    _providers = data.llm_providers.map((p) => ({
       id: p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, ''),
       name: p.name,
       origins: [p.pattern]
@@ -23,7 +23,8 @@ async function _loadProviders() {
 }
 
 export async function getProviders() {
-  return await _loadProviders();
+  const providers = await _loadProviders();
+  return providers || []; // never return null
 }
 
 export async function getOpenAiSiteTabs() {

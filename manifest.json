@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PromptForge",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "Local AI-powered prompt manager with versioning and Ollama integration.",
     "permissions": [
         "storage",
@@ -9,7 +9,8 @@
         "scripting",
         "activeTab",
         "contextMenus",
-        "notifications"
+        "notifications",
+        "downloads"
     ],
     "icons": {
         "16": "icons/icon16.png",

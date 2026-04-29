@@ -3,7 +3,7 @@ import { getPrompts, onPromptsChanged, savePrompt } from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
 
 // ---------------------------
-// Install / Update
+// Install / Update / Startup
 // ---------------------------
 chrome.runtime.onInstalled.addListener(function (details) {
   console.log('onInstalled', details);
@@ -14,6 +14,12 @@ chrome.runtime.onInstalled.addListener(function (details) {
   if (shouldRebuild) {
     rebuildProviderMap();
   }
+  createPromptContextMenu();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  createPromptContextMenu();
+  rebuildProviderMap();
 });
 
 async function rebuildProviderMap() {
@@ -61,8 +67,10 @@ chrome.permissions.onAdded.addListener(async (permissions) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url) {
     try {
-      const { patternsArray } = await getProviders();
-      for (const originPattern of patternsArray) {
+      const providers = await getProviders();
+      for (const provider of providers) {
+        const originPattern = provider.origins[0];
+        if (!originPattern) continue;
         // Inject on ALL LLM sites regardless of permissions
         // The content script will check permissions at runtime for injection vs clipboard
         const regexPattern = originPattern
@@ -84,13 +92,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           } catch (e) {
             // Ignore common transient/injection errors
             const msg = e.message || '';
-            const isIgnorable = 
+            const isIgnorable =
               msg.includes('Cannot access a chrome://') ||
               msg.includes('No matching window') ||
               msg.includes('Could not establish connection') ||
               msg.includes('The tab was closed') ||
-              msg.includes('Cannot access contents of the page');
-            
+              msg.includes('Cannot access contents of the page') ||
+              msg.includes('Cannot access a chrome-extension://');
+
             if (!isIgnorable) {
               console.error(`Failed to inject tab ${tabId}:`, e);
             }
@@ -99,7 +108,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         }
       }
     } catch (err) {
-      if (tab.url && !tab.url.startsWith('chrome://')) {
+      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
         console.error(`Error during tab update for ${tab.url}:`, err);
       }
     }
@@ -162,23 +171,17 @@ async function createPromptContextMenu() {
       contexts: ['selection']
     });
     getPrompts().then(prompts => {
-      prompts.forEach((prompt, idx) => {
+      prompts.forEach((prompt) => {
         chrome.contextMenus.create({
-          id: 'prompt-' + idx,
+          id: 'prompt-' + prompt.uuid,
           parentId: 'open-promptforge',
-          title: prompt.title || `Prompt ${idx + 1}`,
+          title: prompt.title || 'Untitled Prompt',
           contexts: ['all']
         });
       });
     });
   });
 }
-
-chrome.runtime.onInstalled.addListener(() => createPromptContextMenu());
-chrome.runtime.onStartup.addListener(() => {
-  createPromptContextMenu();
-  rebuildProviderMap();
-});
 
 onPromptsChanged(() => createPromptContextMenu());
 
@@ -211,15 +214,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
   if (info.menuItemId.startsWith('prompt-')) {
-    const idx = parseInt(info.menuItemId.replace('prompt-', ''), 10);
+    const uuid = info.menuItemId.replace('prompt-', '');
     const prompts = await getPrompts();
-    if (prompts[idx]) {
-      const prompt = prompts[idx];
+    const prompt = prompts.find(p => p.uuid === uuid);
+    if (prompt) {
       // COMMENT: Route through content script so variables are processed and injection is handled properly
       try {
         await chrome.tabs.sendMessage(tab.id, {
           type: 'PROMPTFORGE_SEND_PROMPT',
-          prompt: { content: prompt.content, title: prompt.title }
+          prompt: { content: prompt.content, title: prompt.title, uuid: prompt.uuid }
         }, (_response) => {
           if (chrome.runtime.lastError) {
             // Fallback: content script not available, copy to clipboard
@@ -227,12 +230,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
               target: { tabId: tab.id },
               func: (text) => navigator.clipboard.writeText(text),
               args: [prompt.content]
-            }).then(() => {
+            }).then(async () => {
               chrome.notifications?.create({
                 type: 'basic',
                 iconUrl: 'icons/icon128.png',
                 title: 'Prompt Copied',
                 message: `Copied: ${prompt.title}`
+              });
+              await chrome.storage.local.get({ prompts_storage: null }, (data) => {
+                const store = data.prompts_storage;
+                if (store && Array.isArray(store.prompts)) {
+                  const idx = store.prompts.findIndex(p => p.uuid === prompt.uuid);
+                  if (idx !== -1) {
+                    store.prompts[idx].useCount = (store.prompts[idx].useCount || 0) + 1;
+                    store.prompts[idx].lastUsedAt = new Date().toISOString();
+                    chrome.storage.local.set({ prompts_storage: store });
+                  }
+                }
               });
             }).catch(() => {});
           }
@@ -282,9 +296,11 @@ async function openOrFocusAppTab(path) {
 }
 
 async function queryAiSiteTabs() {
-  const { patternsArray } = await getProviders();
+  const providers = await getProviders();
   const results = [];
-  for (const pattern of patternsArray) {
+  for (const provider of providers) {
+    const pattern = provider.origins[0];
+    if (!pattern) continue;
     const hasPermission = await chrome.permissions.contains({ origins: [pattern] });
     if (hasPermission) {
       try {

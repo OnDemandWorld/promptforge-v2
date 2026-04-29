@@ -1,8 +1,20 @@
 // popup.js
 import * as PromptStorage from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
+import { writeBackup } from './autoBackup.js';
 
-// Status
+// ─── Auto backup trigger (debounced) ──────────────────────────────────────
+
+function triggerAutoBackup() {
+  clearTimeout(window._pfbackupTimer);
+  window._pfbackupTimer = setTimeout(() => {
+    PromptStorage.getPrompts().then(prompts => {
+      writeBackup(prompts).catch(() => {});
+    });
+  }, 2000);
+}
+
+// ─── Status ───────────────────────────────────────────────────────────────
 async function initStatus() {
   try {
     const result = await checkConnection();
@@ -64,6 +76,7 @@ async function loadPrompts() {
       try {
         await navigator.clipboard.writeText(p.content);
         await PromptStorage.updatePrompt(p.uuid, { useCount: (p.useCount || 0) + 1, lastUsedAt: new Date().toISOString() });
+        triggerAutoBackup();
         h4.textContent = 'Copied! ✓';
         h4.style.color = 'var(--color-success)';
         setTimeout(() => window.close(), 800);

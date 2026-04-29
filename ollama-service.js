@@ -330,11 +330,11 @@ export async function checkConnection() {
       signal: AbortSignal.timeout(5000),
       ...(Object.keys(headers).length > 0 ? { headers } : {})
     });
-    if (!res.ok) return { connected: false, models: [], error: `HTTP ${res.status}` };
+    if (!res.ok) return { connected: false, models: [], model: settings.ollamaModel || DEFAULT_MODEL, error: `HTTP ${res.status}` };
     const data = await res.json();
-    return { connected: true, models: data.models?.map(m => m.name) || [], error: null };
+    return { connected: true, models: data.models?.map(m => m.name) || [], model: settings.ollamaModel || DEFAULT_MODEL, error: null };
   } catch (e) {
-    return { connected: false, models: [], error: e.message };
+    return { connected: false, models: [], model: DEFAULT_MODEL, error: e.message };
   }
 }
 

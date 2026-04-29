@@ -5,13 +5,13 @@ import * as PromptStorage from './promptStorage.js';
 import { generateUUID } from './utils.js';
 import { improvePrompt, generateVariants, suggestAllMetadata, checkConnection, looksLikeResponseInsteadOfPrompt } from './ollama-service.js';
 import { getOpenAiSiteTabs, sendPromptToTab } from './integration-manager.js';
+import * as AutoBackup from './autoBackup.js';
 
 const CATEGORIES = [
   'Writing & Content', 'Coding & Development', 'Analysis & Research',
   'Creative & Design', 'Business & Marketing', 'Education & Learning',
   'Data & Technical', 'Communication & Email', 'Productivity & Planning', 'Other'
 ];
-const DEFAULT_MODEL = 'gemma4:latest';
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────
 
@@ -1060,8 +1060,87 @@ async function buildDataSettings() {
 
   const body = el('div', { style: 'display:flex;flex-direction:column;gap:12px;' });
 
+  // ── Auto Backup Section ──
+  const backupSection = el('div', { style: 'margin-bottom:8px;' });
+  backupSection.appendChild(el('h4', { style: 'font-size:13px;margin:0 0 8px;color:var(--color-text-secondary);' }, ['Backup to File']));
+
+  // Description explaining the workflow
+  const descEl = el('div', { style: 'font-size:12px;color:var(--color-text-secondary);margin:0 0 12px;line-height:1.5;' });
+  descEl.textContent = 'Save your prompts to a JSON file in a cloud-synced folder (iCloud, Dropbox, etc.). On another machine, point to the same file to merge your prompts.';
+  backupSection.appendChild(descEl);
+
+  const statusRow = el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:8px;' });
+  const statusLabel = el('span', { style: 'min-width:120px;font-size:13px;color:var(--color-text-secondary);' }, ['Backup:']);
+  const statusText = el('span', { style: 'font-size:13px;' }, ['Off']);
+  const pickBtn = el('button', { className: 'btn btn-sm btn-secondary' }, ['Choose Backup Location…']);
+  const disableBtn = el('button', { className: 'btn btn-sm btn-danger', style: 'display:none;' }, ['Disable']);
+
+  async function refreshBackupStatus() {
+    const settings = await AutoBackup.getBackupSettings();
+    if (settings && settings.enabled) {
+      statusText.textContent = `On — Downloads/promptforge/`;
+      disableBtn.style.display = '';
+      pickBtn.style.display = '';
+      pickBtn.textContent = 'Backup Now';
+    } else {
+      statusText.textContent = 'Off';
+      pickBtn.style.display = '';
+      pickBtn.textContent = 'Choose Backup Location…';
+      disableBtn.style.display = 'none';
+    }
+  }
+
+  async function handlePick(_repick = false) {
+    try {
+      const prompts = await PromptStorage.getPrompts();
+      const result = await AutoBackup.pickBackupFile(prompts);
+      if (result.enabled) {
+        toast('Backup file saved. Auto-backup is now active.', 'success');
+        await refreshBackupStatus();
+        AutoBackup.startAutoBackup();
+      }
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error');
+    }
+  }
+
+  pickBtn.addEventListener('click', () => handlePick(false));
+
+  disableBtn.addEventListener('click', async () => {
+    await AutoBackup.clearBackupFile();
+    toast('Auto backup disabled', 'info');
+    await refreshBackupStatus();
+  });
+
+  statusRow.appendChild(statusLabel);
+  statusRow.appendChild(statusText);
+  statusRow.appendChild(pickBtn);
+  statusRow.appendChild(disableBtn);
+  backupSection.appendChild(statusRow);
+
+  // Import from backup button
+  const importBackupBtn = el('button', { className: 'btn btn-sm btn-secondary' }, ['Import from Backup File']);
+  importBackupBtn.addEventListener('click', async () => {
+    try {
+      const count = await AutoBackup.autoImport();
+      if (count > 0) {
+        toast(`Merged ${count} prompts from backup`, 'success');
+      } else {
+        toast('No backup data to import (or no file selected)', 'info');
+      }
+    } catch (e) {
+      toast('Import failed: ' + e.message, 'error');
+    }
+  });
+  backupSection.appendChild(importBackupBtn);
+
+  body.appendChild(backupSection);
+
+  // ── Manual Export/Import ──
+  body.appendChild(el('hr', { style: 'border:none;border-top:1px solid var(--color-border);margin:8px 0;' }));
+
   // Export
-  const exportBtn = el('button', { className: 'btn btn-secondary' }, ['Export All Data']);
+  const exportBtn = el('button', { className: 'btn btn-secondary' }, ['Export All Data (JSON File)']);
   exportBtn.addEventListener('click', () => PromptStorage.exportPrompts());
   body.appendChild(exportBtn);
 
@@ -1107,6 +1186,9 @@ async function buildDataSettings() {
   });
   body.appendChild(deleteBtn);
 
+  // Refresh status on mount
+  await refreshBackupStatus();
+
   const heading = sec.querySelector('h3');
   heading.parentNode.insertBefore(body, heading.nextSibling);
   return sec;
@@ -1127,6 +1209,17 @@ function createSettingSection(title, builder) {
 initTheme().catch(() => {});
 handleRoute();
 
+// Auto-backup: start listener on app load
+(async function initAutoBackup() {
+  try {
+    const settings = await AutoBackup.getBackupSettings();
+    if (!settings || !settings.enabled) return;
+
+    // Start watching for changes
+    AutoBackup.startAutoBackup();
+  } catch { /* silently skip */ }
+})();
+
 // Ollama status
 async function updateOllamaStatus() {
   const result = await checkConnection();
@@ -1135,8 +1228,7 @@ async function updateOllamaStatus() {
   if (dot) dot.className = `status-dot ${result.connected ? 'connected' : 'disconnected'}`;
   if (text) {
     if (result.connected) {
-      // Fix: Handle missing model name gracefully
-      const modelName = result.model || (result.models && result.models[0]?.name) || (result.models && String(result.models[0]));
+      const modelName = result.model;
       text.textContent = modelName ? `Ollama · ${modelName}` : 'Ollama Connected';
     } else {
       text.textContent = 'Ollama disconnected';
