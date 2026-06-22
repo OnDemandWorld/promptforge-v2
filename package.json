@@ -1,6 +1,6 @@
 {
   "name": "promptforge",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Local AI-powered prompt manager Chrome extension with Ollama integration.",
   "private": true,
   "type": "module",

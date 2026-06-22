@@ -2,3 +2,7 @@ node_modules/
 .DS_Store
 *.zip
 qwen-code-export-*
+
+# Local tooling / build output
+.qwen/
+dist/

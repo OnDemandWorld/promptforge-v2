@@ -48,6 +48,12 @@ function normalisePrompt(p = {}) {
   out.categoryId = typeof p.categoryId === 'string' && p.categoryId.length > 0
     ? p.categoryId
     : (typeof p.category === 'string' && p.category.length > 0 ? p.category : null);
+  // State fields that must survive normalisation (previously stripped on every
+  // read+write, which silently broke favorites, archive, use-counts and sorts).
+  if (typeof p.favorite === 'boolean') out.favorite = p.favorite;
+  if (typeof p._archived === 'boolean') out._archived = p._archived;
+  if (typeof p.useCount === 'number') out.useCount = p.useCount;
+  if (p.lastUsedAt) out.lastUsedAt = p.lastUsedAt;
   // version history
   if (Array.isArray(p.versions)) {
     out.versions = p.versions.map(v => ({
@@ -125,6 +131,20 @@ async function writeStorage(prompts) {
 }
 
 // ---------------------------
+// Write serialization
+// ---------------------------
+// Every mutating public function does read → modify → write as separate storage
+// calls. Without serialization, two interleaving mutations (e.g. double-click,
+// floating panel + app tab racing) clobber each other. withLock runs each
+// mutation sequentially on a shared promise chain.
+let _writeChain = Promise.resolve();
+function withLock(fn) {
+  const run = _writeChain.then(fn, fn); // run whether or not the previous failed
+  _writeChain = run.catch(() => {});     // keep the chain alive on rejection
+  return run;
+}
+
+// ---------------------------
 // Folder helpers
 // ---------------------------
 function normaliseFolder(folder = {}) {
@@ -153,82 +173,110 @@ export async function setPrompts(prompts) {
 }
 
 export async function savePrompt({ title, content, uuid, tags = [], folderId = null, categoryId = null, category = null }) {
-  if (!title && !content) throw new Error('Title or content is required');
-  const prompts = await getPrompts();
-  const prompt = normalisePrompt({ uuid, title, content, tags, folderId, categoryId: categoryId || category });
-  // Seed version if not already set
-  if (prompt.versions.length === 0 && prompt.content) {
-    prompt.versions.push({
-      content: prompt.content,
-      source: 'user_input',
-      metadata: {},
-      createdAt: prompt.createdAt
-    });
-  }
-  prompts.push(prompt);
-  await writeStorage(prompts);
-  return { success: true, prompt };
+  return withLock(async () => {
+    if (!title && !content) throw new Error('Title or content is required');
+    const prompts = await getPrompts();
+    const prompt = normalisePrompt({ uuid, title, content, tags, folderId, categoryId: categoryId || category });
+    // Seed version if not already set
+    if (prompt.versions.length === 0 && prompt.content) {
+      prompt.versions.push({
+        content: prompt.content,
+        source: 'user_input',
+        metadata: {},
+        createdAt: prompt.createdAt
+      });
+    }
+    prompts.push(prompt);
+    await writeStorage(prompts);
+    return { success: true, prompt };
+  });
 }
 
 export async function updatePrompt(uuid, partial) {
-  const prompts = await getPrompts();
-  const idx = prompts.findIndex(p => p.uuid === uuid);
-  if (idx === -1) throw new Error('Prompt not found');
-  prompts[idx] = normalisePrompt({ ...prompts[idx], ...partial, updatedAt: new Date().toISOString() });
-  await writeStorage(prompts);
-  return prompts[idx];
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === uuid);
+    if (idx === -1) throw new Error('Prompt not found');
+    prompts[idx] = normalisePrompt({ ...prompts[idx], ...partial, updatedAt: new Date().toISOString() });
+    await writeStorage(prompts);
+    return prompts[idx];
+  });
 }
 
 export async function deletePrompt(uuid) {
-  const prompts = (await getPrompts()).filter(p => p.uuid !== uuid);
-  await writeStorage(prompts);
-  return true;
+  return withLock(async () => {
+    const prompts = (await getPrompts()).filter(p => p.uuid !== uuid);
+    await writeStorage(prompts);
+    return true;
+  });
+}
+
+// Increment useCount + stamp lastUsedAt. Single source for "prompt was used"
+// so callers stop mutating raw storage inline (which skipped normalisation
+// and raced with other writes).
+export async function bumpUseCount(uuid) {
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === uuid);
+    if (idx === -1) return null;
+    prompts[idx] = normalisePrompt({
+      ...prompts[idx],
+      useCount: (prompts[idx].useCount || 0) + 1,
+      lastUsedAt: new Date().toISOString()
+    });
+    await writeStorage(prompts);
+    return prompts[idx];
+  });
 }
 
 export async function mergePrompts(imported) {
-  const base = await getPrompts();
-  const map = new Map(base.map(p => [p.uuid, p]));
-  imported.forEach(raw => {
-    const p = normalisePrompt(raw);
-    const existing = map.get(p.uuid);
-    if (existing) {
-      const oldDate = new Date(existing.updatedAt || existing.createdAt);
-      const newDate = new Date(p.updatedAt || p.createdAt);
-      if (newDate > oldDate) map.set(p.uuid, p);
-    } else {
-      map.set(p.uuid, p);
-    }
+  return withLock(async () => {
+    const base = await getPrompts();
+    const map = new Map(base.map(p => [p.uuid, p]));
+    imported.forEach(raw => {
+      const p = normalisePrompt(raw);
+      const existing = map.get(p.uuid);
+      if (existing) {
+        const oldDate = new Date(existing.updatedAt || existing.createdAt);
+        const newDate = new Date(p.updatedAt || p.createdAt);
+        if (newDate > oldDate) map.set(p.uuid, p);
+      } else {
+        map.set(p.uuid, p);
+      }
+    });
+    const merged = Array.from(map.values());
+    await writeStorage(merged);
+    return merged;
   });
-  const merged = Array.from(map.values());
-  await writeStorage(merged);
-  return merged;
 }
 
 // ---------------------------
 // Version History API
 // ---------------------------
 export async function addVersion(promptUuid, content, source = 'manual_edit', metadata = {}) {
-  const prompts = await getPrompts();
-  const idx = prompts.findIndex(p => p.uuid === promptUuid);
-  if (idx === -1) throw new Error('Prompt not found');
-  // Dedup: skip if content identical to latest version
-  const versions = prompts[idx].versions || [];
-  if (versions.length > 0 && versions[versions.length - 1].content === content) {
-    return versions[versions.length - 1];
-  }
-  const version = {
-    content,
-    source,
-    metadata,
-    createdAt: new Date().toISOString()
-  };
-  if (!prompts[idx].versions) prompts[idx].versions = [];
-  prompts[idx].versions.push(version);
-  // Also update main content
-  prompts[idx].content = content;
-  prompts[idx].updatedAt = version.createdAt;
-  await writeStorage(prompts);
-  return version;
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === promptUuid);
+    if (idx === -1) throw new Error('Prompt not found');
+    // Dedup: skip if content identical to latest version
+    const versions = prompts[idx].versions || [];
+    if (versions.length > 0 && versions[versions.length - 1].content === content) {
+      return versions[versions.length - 1];
+    }
+    const version = {
+      content,
+      source,
+      metadata,
+      createdAt: new Date().toISOString()
+    };
+    if (!prompts[idx].versions) prompts[idx].versions = [];
+    prompts[idx].versions.push(version);
+    // Also update main content
+    prompts[idx].content = content;
+    prompts[idx].updatedAt = version.createdAt;
+    await writeStorage(prompts);
+    return version;
+  });
 }
 
 export async function getVersions(promptUuid) {
@@ -257,8 +305,10 @@ export async function getFolders() {
 }
 
 export async function setFolders(folders) {
-  const { prompts } = await readRawStorage();
-  await writeStore({ version: PROMPT_STORAGE_VERSION, prompts, folders });
+  return withLock(async () => {
+    const { prompts } = await readRawStorage();
+    await writeStore({ version: PROMPT_STORAGE_VERSION, prompts, folders });
+  });
 }
 
 export async function saveFolder({ name, parentId = null, id }) {
@@ -280,11 +330,13 @@ export async function updateFolder(id, partial) {
 }
 
 export async function deleteFolder(id) {
-  const { prompts, folders } = await readRawStorage();
-  const remainingFolders = folders.filter(f => f.id !== id);
-  const updatedPrompts = prompts.map(p => (p.folderId === id ? { ...p, folderId: null } : p));
-  await writeStore({ version: PROMPT_STORAGE_VERSION, prompts: updatedPrompts, folders: remainingFolders });
-  return true;
+  return withLock(async () => {
+    const { prompts, folders } = await readRawStorage();
+    const remainingFolders = folders.filter(f => f.id !== id);
+    const updatedPrompts = prompts.map(p => (p.folderId === id ? { ...p, folderId: null } : p));
+    await writeStore({ version: PROMPT_STORAGE_VERSION, prompts: updatedPrompts, folders: remainingFolders });
+    return true;
+  });
 }
 
 export async function movePromptToFolder(promptUuid, folderId = null) {

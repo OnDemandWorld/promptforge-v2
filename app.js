@@ -3,15 +3,12 @@
 
 import * as PromptStorage from './promptStorage.js';
 import { generateUUID } from './utils.js';
-import { improvePrompt, generateVariants, suggestAllMetadata, checkConnection, looksLikeResponseInsteadOfPrompt } from './ollama-service.js';
+import { improvePrompt, generateVariants, suggestAllMetadata, checkConnection, looksLikeResponseInsteadOfPrompt, CATEGORY_NAMES, DEFAULTS } from './ollama-service.js';
 import { getOpenAiSiteTabs, sendPromptToTab } from './integration-manager.js';
 import * as AutoBackup from './autoBackup.js';
 
-const CATEGORIES = [
-  'Writing & Content', 'Coding & Development', 'Analysis & Research',
-  'Creative & Design', 'Business & Marketing', 'Education & Learning',
-  'Data & Technical', 'Communication & Email', 'Productivity & Planning', 'Other'
-];
+// Single-sourced from ollama-service.js (see CATEGORY_NAMES / DEFAULTS).
+const CATEGORIES = CATEGORY_NAMES;
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────
 
@@ -153,7 +150,7 @@ async function renderLibrary(container, onNavigate) {
   const categories = data.categories || CATEGORIES;
   let activeCategory = null;
 
-  for (const cat of categories.sort()) {
+  for (const cat of [...categories].sort()) {
     const pill = el('button', { className: 'category-pill' }, [cat]);
     pill.addEventListener('click', () => {
       $$('.category-pill', pillsContainer).forEach(p => p.classList.remove('active'));
@@ -361,7 +358,7 @@ async function renderLibrary(container, onNavigate) {
                   const result = await sendPromptToTab(tab.tabId, p.content);
                   if (result.success) {
                     toast(`Sent to ${tab.providerName}`, 'success');
-                    await PromptStorage.updatePrompt(p.uuid, { useCount: (p.useCount || 0) + 1, lastUsedAt: new Date().toISOString() });
+                    await PromptStorage.bumpUseCount(p.uuid);
                   } else {
                     toast('Send failed: ' + (result.error || 'unknown error'), 'error');
                   }
@@ -408,7 +405,23 @@ async function renderEditor(container, promptUuid, onNavigate) {
   const titleEl = el('h2', {}, [promptUuid ? 'Edit Prompt' : 'New Prompt']);
   header.appendChild(titleEl);
   header.appendChild(el('span', { className: 'editor-save-indicator', id: 'save-indicator' }));
+  // AI processing indicator: spinner + label, shown while Ollama is working
+  // (Improve / Variants / Auto-suggest). Stop for streaming Improve is the
+  // existing stopBtn in the actions row.
+  const aiStatus = el('span', { className: 'editor-ai-status', id: 'ai-status', style: 'display:none;' });
+  header.appendChild(aiStatus);
   wrapper.appendChild(header);
+
+  function setAiStatus(label) {
+    aiStatus.innerHTML = '';
+    aiStatus.appendChild(el('span', { className: 'ai-spinner' }));
+    aiStatus.appendChild(document.createTextNode(' ' + label));
+    aiStatus.style.display = 'inline-flex';
+  }
+  function clearAiStatus() {
+    aiStatus.style.display = 'none';
+    aiStatus.innerHTML = '';
+  }
 
   // Title
   const titleInput = el('input', { className: 'editor-title-input', type: 'text', placeholder: 'Prompt title…' });
@@ -420,7 +433,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
   const categories = data.categories || CATEGORIES;
   const catSelect = el('select', { className: 'editor-category-select' });
   catSelect.appendChild(el('option', { value: '' }, ['Uncategorized']));
-  for (const c of categories.sort()) catSelect.appendChild(el('option', { value: c }, [c]));
+  for (const c of [...categories].sort()) catSelect.appendChild(el('option', { value: c }, [c]));
   metaRow.appendChild(catSelect);
 
   // Tag input
@@ -556,7 +569,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
 
       // Auto-suggest metadata on first save (only when user didn't provide title, tags, or category)
       if (willAutoSuggest) {
-        if (saveIndicator) saveIndicator.textContent = 'Analyzing prompt…';
+        setAiStatus('Analyzing prompt…');
 
         try {
           const metadata = await suggestAllMetadata(content);
@@ -597,6 +610,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     } finally {
       saveBtn.disabled = false;
       if (saveIndicator) saveIndicator.textContent = '';
+      clearAiStatus();
     }
   }
 
@@ -608,6 +622,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
 
     improveBtn.disabled = true; improveBtn.textContent = 'Improving…';
     stopBtn.style.display = 'inline-flex';
+    setAiStatus('Improving…');
     textarea.setAttribute('readonly', ''); textarea.style.opacity = '0.6';
     improveController = new AbortController();
 
@@ -633,6 +648,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     } finally {
       improveController = null; textarea.removeAttribute('readonly'); textarea.style.opacity = '1';
       improveBtn.disabled = false; improveBtn.textContent = 'Improve with AI'; stopBtn.style.display = 'none';
+      clearAiStatus();
     }
   }
 
@@ -642,6 +658,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     const content = textarea.value.trim();
     if (!content) { toast('Nothing to generate variants for', 'warning'); return; }
     variantsBtn.disabled = true; variantsBtn.textContent = 'Generating…';
+    setAiStatus('Generating variants…');
     try {
       const variants = await generateVariants(content, 3);
       if (promptUuid) {
@@ -653,7 +670,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
       // Show modal
       showVariantModal(variants, (text) => { textarea.value = text; dirty = true; toast('Variant loaded — edit and save', 'success'); });
     } catch (e) { toast('Variant generation failed: ' + e.message, 'error'); }
-    finally { variantsBtn.disabled = false; variantsBtn.textContent = 'Variants'; }
+    finally { variantsBtn.disabled = false; variantsBtn.textContent = 'Variants'; clearAiStatus(); }
   }
 
   async function doVersionHistory() {
@@ -861,9 +878,9 @@ async function buildOllamaSettings() {
   sec.appendChild(el('h3', {}, ['Ollama Connection']));
 
   const data = await chrome.storage.local.get({
-    ollamaUrl: 'http://localhost:11434',
-    ollamaModel: 'gemma4:latest',
-    ollamaNumCtx: 8192,
+    ollamaUrl: DEFAULTS.url,
+    ollamaModel: DEFAULTS.model,
+    ollamaNumCtx: DEFAULTS.numCtx,
     useThinking: true,
     ollamaBearerToken: ''
   });
@@ -960,7 +977,7 @@ async function buildOllamaSettings() {
   body.appendChild(testBtn);
 
   const help = el('div', { style: 'font-size:12px;color:var(--color-text-secondary);margin-top:4px;' });
-  help.innerHTML = 'Make sure Ollama is running with Chrome extension support:<br><code style="background:var(--color-bg-secondary);padding:2px 6px;border-radius:3px;">OLLAMA_ORIGINS="chrome-extension://*" ollama serve</code>';
+  help.innerHTML = 'Just run <code style="background:var(--color-bg-secondary);padding:2px 6px;border-radius:3px;">ollama serve</code> — no <code>OLLAMA_ORIGINS</code> needed. PromptForge rewrites the request origin automatically. For cloud, set the URL to https://ollama.com and add your API key above.';
   body.appendChild(help);
 
   const heading = sec.querySelector('h3');
@@ -1078,7 +1095,7 @@ async function buildDataSettings() {
   async function refreshBackupStatus() {
     const settings = await AutoBackup.getBackupSettings();
     if (settings && settings.enabled) {
-      statusText.textContent = `On — Downloads/promptforge/`;
+      statusText.textContent = 'On — Downloads/promptforge/';
       disableBtn.style.display = '';
       pickBtn.style.display = '';
       pickBtn.textContent = 'Backup Now';
@@ -1156,9 +1173,10 @@ async function buildDataSettings() {
     const text = await file.text();
     try {
       if (mode === 'replace') {
-        // Replace mode: clear storage first
-        await chrome.storage.local.clear();
-        // Then import as merge
+        // Replace only prompt data; preserve all other settings (Ollama URL,
+        // model, API key, backup, theme, etc.). Previously this called
+        // chrome.storage.local.clear(), which wiped every setting.
+        await chrome.storage.local.remove(['prompts_storage', 'prompts']);
         const result = await PromptStorage.importPrompts(file);
         toast(`Replaced with ${Array.isArray(result) ? result.length : 'unknown'} prompts`, 'success');
       } else {
@@ -1237,3 +1255,11 @@ async function updateOllamaStatus() {
 }
 updateOllamaStatus().catch(() => {});
 window.addEventListener('focus', () => updateOllamaStatus().catch(() => {}));
+
+// COMMENT: Keep the top-right model label live when the user changes the model or URL
+// in Settings, instead of waiting for the next window focus.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.ollamaModel || changes.ollamaUrl)) {
+    updateOllamaStatus().catch(() => {});
+  }
+});

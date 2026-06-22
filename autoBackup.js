@@ -6,6 +6,8 @@
 // 3. On app open, user can merge from the backup file
 // 4. If the user uses iCloud/Dropbox, the backup file syncs across machines
 
+import { PROMPT_STORAGE_VERSION } from './promptStorage.js';
+
 const BACKUP_FILENAME = 'promptforge-backup.json';
 const BACKUP_FOLDER = 'promptforge';
 const BACKUP_PATH = `${BACKUP_FOLDER}/${BACKUP_FILENAME}`;
@@ -35,7 +37,7 @@ async function saveSettings(settings) {
  */
 export async function pickBackupFile(prompts) {
   const data = JSON.stringify({
-    version: 3,
+    version: PROMPT_STORAGE_VERSION,
     prompts,
     exportedAt: new Date().toISOString()
   }, null, 2);
@@ -110,13 +112,6 @@ export async function clearBackupFile() {
 }
 
 /**
- * Returns null — not applicable for file mode.
- */
-export async function getBackupHandle() {
-  return null;
-}
-
-/**
  * Write current prompts to backup.
  * Always writes to Downloads/promptforge/promptforge-backup.json (overwrites).
  * @param {Array} prompts - Array of prompt objects
@@ -126,7 +121,7 @@ export async function writeBackup(prompts) {
   if (!settings || !settings.enabled) return;
 
   const data = JSON.stringify({
-    version: 3,
+    version: PROMPT_STORAGE_VERSION,
     prompts,
     exportedAt: new Date().toISOString()
   }, null, 2);
@@ -186,27 +181,16 @@ export async function autoImport() {
 }
 
 /**
- * Returns null — file-based backup cannot be read programmatically.
- * Use autoImport() with a file picker instead.
- */
-export async function readBackup() {
-  return null;
-}
-
-/**
- * Always returns { hasBackup: false } — file backups cannot be checked automatically.
- * User must manually import via the UI.
- */
-export async function checkBackupStatus() {
-  return { hasBackup: false, exportedAt: null, isNewer: false };
-}
-
-/**
  * Setup auto-export: watches for prompt changes and triggers backup.
- * Call this once when app.html loads.
+ * Call this once when app.html loads. Safe to call repeatedly — it replaces any
+ * previously registered listener instead of stacking a new one each call.
  */
+let _autoBackupListener = null;
 export function startAutoBackup() {
-  chrome.storage.onChanged.addListener((changes, area) => {
+  if (_autoBackupListener) {
+    chrome.storage.onChanged.removeListener(_autoBackupListener);
+  }
+  _autoBackupListener = (changes, area) => {
     if (area !== 'local' || !changes.prompts_storage) return;
     const store = changes.prompts_storage.newValue;
     if (store && Array.isArray(store.prompts)) {
@@ -215,5 +199,6 @@ export function startAutoBackup() {
         writeBackup(store.prompts).catch(() => {});
       }, 2000);
     }
-  });
+  };
+  chrome.storage.onChanged.addListener(_autoBackupListener);
 }

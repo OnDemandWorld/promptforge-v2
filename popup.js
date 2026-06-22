@@ -75,7 +75,7 @@ async function loadPrompts() {
     item.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(p.content);
-        await PromptStorage.updatePrompt(p.uuid, { useCount: (p.useCount || 0) + 1, lastUsedAt: new Date().toISOString() });
+        await PromptStorage.bumpUseCount(p.uuid);
         triggerAutoBackup();
         h4.textContent = 'Copied! ✓';
         h4.style.color = 'var(--color-success)';

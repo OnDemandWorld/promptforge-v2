@@ -11,7 +11,8 @@ Write, organize, version, and reuse AI prompts on every LLM provider site. All d
 ```bash
 # Option A: Local Ollama
 ollama pull gemma4:latest
-OLLAMA_ORIGINS="chrome-extension://*" ollama serve
+ollama serve
+# No OLLAMA_ORIGINS needed — the extension rewrites the Origin header itself.
 
 # Option B: Cloud (ollama.com) — no install needed
 #   1. Create free account at ollama.com
@@ -71,6 +72,7 @@ promptforge-v2/
 │
 ├── promptStorage.js           # chrome.storage.local, v3 schema, version history
 ├── ollama-service.js          # Ollama REST client (local + cloud with bearer token)
+├── cors-rules.js             # declarativeNetRequest rule: rewrites Origin for Ollama
 ├── integration-manager.js     # Provider list (derived from llm_providers.json)
 ├── ai-operations.js           # Improve, variants, auto-suggest (extracted from content.js)
 ├── llm_providers.json         # 19 provider definitions (pattern, selector, icon)
@@ -79,8 +81,7 @@ promptforge-v2/
 ├── css/                       # App styles (variables, base, components, editor, library, popup)
 ├── icons/                     # Extension icons + UI SVGs + provider icons
 ├── permissions/               # Provider permissions onboarding page
-├── info.html                  # Keyboard shortcuts reference
-└── changelog.html             # Version history
+└── info.html                  # Keyboard shortcuts reference
 ```
 
 ### Storage Schema (v3)
@@ -132,6 +133,8 @@ npm run lint          # ESLint check
 npm run lint:fix      # Auto-fix fixable issues
 ```
 
+Release history is in [CHANGELOG.md](CHANGELOG.md).
+
 ### Debugging
 
 - **Content script logs**: Open DevTools on the AI site page
@@ -144,7 +147,7 @@ npm run lint:fix      # Auto-fix fixable issues
 
 | Issue | Solution |
 |---|---|
-| Ollama connection fails (403) | Local: `OLLAMA_ORIGINS="chrome-extension://*" ollama serve`. Cloud: check API key |
+| Ollama connection fails (403) | No `OLLAMA_ORIGINS` env var needed — the extension rewrites the `Origin` header to `http://localhost` via `declarativeNetRequest`. If it still fails: confirm Ollama is running at the configured URL, and (cloud) check the API key |
 | Prompt won't inject into site | 1) Enable integration in Settings, 2) Refresh the site, 3) Click into input first |
 | Floating panel not appearing | Check provider integration is enabled; reload the page |
 | Variables not processing | Use `#variable_name#` syntax (letters, numbers, underscores only) |

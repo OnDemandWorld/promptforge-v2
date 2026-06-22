@@ -55,12 +55,3 @@ export async function sendPromptToTab(tabId, text) {
     return { success: false, error: e.message };
   }
 }
-
-export async function getProviderById(id) {
-  const providers = await getProviders();
-  return providers.find(p => p.id === id);
-}
-
-export async function getAllProviders() {
-  return await getProviders();
-}

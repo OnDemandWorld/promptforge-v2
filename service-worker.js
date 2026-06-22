@@ -1,6 +1,7 @@
 import { getProviders } from './integration-manager.js';
-import { getPrompts, onPromptsChanged, savePrompt } from './promptStorage.js';
+import { getPrompts, onPromptsChanged, savePrompt, bumpUseCount } from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
+import { syncOllamaCorsRules } from './cors-rules.js';
 
 // ---------------------------
 // Install / Update / Startup
@@ -15,11 +16,20 @@ chrome.runtime.onInstalled.addListener(function (details) {
     rebuildProviderMap();
   }
   createPromptContextMenu();
+  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   createPromptContextMenu();
   rebuildProviderMap();
+  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
+});
+
+// Keep the Origin-rewrite rule in sync with the configured Ollama URL.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.ollamaUrl) {
+    syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
+  }
 });
 
 async function rebuildProviderMap() {
@@ -237,17 +247,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
                 title: 'Prompt Copied',
                 message: `Copied: ${prompt.title}`
               });
-              await chrome.storage.local.get({ prompts_storage: null }, (data) => {
-                const store = data.prompts_storage;
-                if (store && Array.isArray(store.prompts)) {
-                  const idx = store.prompts.findIndex(p => p.uuid === prompt.uuid);
-                  if (idx !== -1) {
-                    store.prompts[idx].useCount = (store.prompts[idx].useCount || 0) + 1;
-                    store.prompts[idx].lastUsedAt = new Date().toISOString();
-                    chrome.storage.local.set({ prompts_storage: store });
-                  }
-                }
-              });
+              await bumpUseCount(prompt.uuid).catch(() => {});
             }).catch(() => {});
           }
         });

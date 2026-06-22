@@ -5,17 +5,25 @@
 //
 // Default model: gemma4:latest
 
-const DEFAULT_MODEL = 'gemma4:latest';
+// Single source of truth for Ollama defaults. Import from app.js / cors-rules.js
+// instead of re-declaring the same literals.
+export const DEFAULTS = Object.freeze({
+  url: 'http://localhost:11434',
+  model: 'gemma4:latest',
+  numCtx: 8192,
+  variantCount: 3
+});
+const DEFAULT_MODEL = DEFAULTS.model;
 
 async function getOllamaSettings() {
   try {
     const data = await chrome.storage.local.get({
-      ollamaUrl: 'http://localhost:11434',
-      ollamaModel: DEFAULT_MODEL,
-      ollamaNumCtx: 8192,
+      ollamaUrl: DEFAULTS.url,
+      ollamaModel: DEFAULTS.model,
+      ollamaNumCtx: DEFAULTS.numCtx,
       useThinking: true,
       ollamaBearerToken: '',
-      variantCount: 3,
+      variantCount: DEFAULTS.variantCount,
       autoSuggestMetadata: true,
       theme: 'system',
       displayMode: 'standard',
@@ -29,12 +37,12 @@ async function getOllamaSettings() {
     return data;
   } catch {
     return {
-      ollamaUrl: 'http://localhost:11434',
-      ollamaModel: DEFAULT_MODEL,
-      ollamaNumCtx: 8192,
+      ollamaUrl: DEFAULTS.url,
+      ollamaModel: DEFAULTS.model,
+      ollamaNumCtx: DEFAULTS.numCtx,
       useThinking: true,
       ollamaBearerToken: '',
-      variantCount: 3,
+      variantCount: DEFAULTS.variantCount,
       autoSuggestMetadata: true
     };
   }
@@ -43,6 +51,24 @@ async function getOllamaSettings() {
 // ---------------------------
 // Meta-prompt constants
 // ---------------------------
+
+// Single source of truth for prompt categories. The category select in app.js,
+// cleanCategory() below, and CATEGORY_SYSTEM_PROMPT all derive from this —
+// adding a category is a one-line change instead of three edits.
+const CATEGORIES = [
+  { name: 'Writing & Content', description: 'blog posts, articles, stories, copywriting, content generation' },
+  { name: 'Coding & Development', description: 'code generation, debugging, code review, technical documentation' },
+  { name: 'Analysis & Research', description: 'summarization, research, fact-finding, comparison, synthesis' },
+  { name: 'Creative & Design', description: 'creative writing, brainstorming, design ideas, naming, visual concepts' },
+  { name: 'Business & Marketing', description: 'marketing copy, sales, strategy, branding, customer-facing content' },
+  { name: 'Education & Learning', description: 'explanations, tutorials, study aids, lesson plans, quizzes' },
+  { name: 'Data & Technical', description: 'data analysis, SQL, spreadsheets, technical specs, system design' },
+  { name: 'Communication & Email', description: 'emails, messages, letters, professional communication' },
+  { name: 'Productivity & Planning', description: 'task lists, planning, scheduling, project management, meeting notes' },
+  { name: 'Other', description: 'anything that does not clearly fit the above' }
+];
+// Category display names for UI consumers (app.js category select, sort, etc.).
+export const CATEGORY_NAMES = CATEGORIES.map(c => c.name);
 
 export const IMPROVE_SYSTEM_PROMPT = `You are an expert prompt engineer. You rewrite prompts to make them clearer, more specific, and more effective when given to a large language model.
 
@@ -128,16 +154,7 @@ Tags: ["marketing", "email", "sales", "copywriting"]
 
 export const CATEGORY_SYSTEM_PROMPT = `You classify AI prompts into exactly one of these categories:
 
-- Writing & Content — blog posts, articles, stories, copywriting, content generation
-- Coding & Development — code generation, debugging, code review, technical documentation
-- Analysis & Research — summarization, research, fact-finding, comparison, synthesis
-- Creative & Design — creative writing, brainstorming, design ideas, naming, visual concepts
-- Business & Marketing — marketing copy, sales, strategy, branding, customer-facing content
-- Education & Learning — explanations, tutorials, study aids, lesson plans, quizzes
-- Data & Technical — data analysis, SQL, spreadsheets, technical specs, system design
-- Communication & Email — emails, messages, letters, professional communication
-- Productivity & Planning — task lists, planning, scheduling, project management, meeting notes
-- Other — anything that does not clearly fit the above
+${CATEGORIES.map(c => `- ${c.name} — ${c.description}`).join('\n')}
 
 Output rules:
 - Return only the category name, exactly as written above (including the "&" character)
@@ -155,22 +172,35 @@ Prompt: "Generate a SQL query that joins these three tables..." → Data & Techn
 // Core chat function
 // ---------------------------
 
+// Map an Ollama HTTP failure to a friendly message. Raw body is logged only,
+// never surfaced to the user (it can contain server paths / HTML / stack traces).
+function ollamaHttpError(status) {
+  if (status === 401 || status === 403) return new Error('Ollama rejected the request (origin or auth). Check the Ollama URL and any API key in Settings.');
+  if (status === 404) return new Error('Ollama model not found. Pull it or pick another model in Settings.');
+  if (status >= 500) return new Error('Ollama returned a server error. Check that Ollama is running.');
+  return new Error(`Ollama request failed (HTTP ${status}). See the console for details.`);
+}
+
 async function ollamaChat(systemPrompt, userMessage, options = {}) {
   const { temperature = 0.7, maxTokens = 1024, timeout = 60000, model, stream = false, think, numCtx, signal } = options;
 
   const settings = await getOllamaSettings();
-  const baseUrl = settings.ollamaUrl || 'http://localhost:11434';
+  const baseUrl = settings.ollamaUrl || DEFAULTS.url;
   const resolvedModel = model || settings.ollamaModel || DEFAULT_MODEL;
-  const resolvedCtx = numCtx || settings.ollamaNumCtx || 8192;
+  const resolvedCtx = numCtx || settings.ollamaNumCtx || DEFAULTS.numCtx;
   const useThinking = think !== undefined ? think : (settings.useThinking !== false);
 
-  let controller;
+  // Always own the controller so a timeout can fire even when the caller passes
+  // an external signal (previously the timeout was silently skipped with a signal,
+  // letting a stalled stream hang until the user clicked Stop).
+  const controller = new AbortController();
+  let tid = null;
+  if (timeout) tid = setTimeout(() => controller.abort(), timeout);
   if (signal) {
-    controller = { signal };
-  } else {
-    controller = new AbortController();
-    if (timeout) setTimeout(() => controller.abort(), timeout);
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
+  const clearTimer = () => { if (tid) { clearTimeout(tid); tid = null; } };
 
   const body = {
     model: resolvedModel,
@@ -189,31 +219,39 @@ async function ollamaChat(systemPrompt, userMessage, options = {}) {
     }
   };
 
-  const res = await fetch(`${baseUrl}/api/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(settings.ollamaBearerToken ? { Authorization: `Bearer ${settings.ollamaBearerToken}` } : {})
-    },
-    body: JSON.stringify(body),
-    signal: controller.signal
-  });
+  try {
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(settings.ollamaBearerToken ? { Authorization: `Bearer ${settings.ollamaBearerToken}` } : {})
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
 
-  if (!res.ok) {
-    const errorBody = await res.text().catch(() => '');
-    throw new Error(`Ollama HTTP ${res.status}: ${res.statusText}${errorBody ? ' — ' + errorBody.substring(0, 500) : ''}`);
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '');
+      if (errorBody) console.error('[PromptForge] Ollama error body:', errorBody.substring(0, 500));
+      throw ollamaHttpError(res.status);
+    }
+
+    if (!stream) {
+      const data = await res.json();
+      clearTimer();
+      return data.message?.content?.trim() || '';
+    }
+
+    // Streaming: hand off the timer so it's cleared when the consumer finishes
+    // (or aborts) iterating, keeping the timeout effective across the whole stream.
+    return ollamaStreamGenerator(res.body, clearTimer);
+  } catch (e) {
+    clearTimer();
+    throw e;
   }
-
-  if (!stream) {
-    const data = await res.json();
-    return data.message?.content?.trim() || '';
-  }
-
-  // Streaming: return async generator
-  return ollamaStreamGenerator(res.body);
 }
 
-async function* ollamaStreamGenerator(body) {
+async function* ollamaStreamGenerator(body, onDone) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -238,6 +276,7 @@ async function* ollamaStreamGenerator(body) {
     }
   } finally {
     reader.releaseLock();
+    if (onDone) onDone();
   }
 }
 
@@ -286,12 +325,6 @@ export function extractJSON(raw) {
 // Output cleaners
 // ---------------------------
 
-const CATEGORIES = [
-  'Writing & Content', 'Coding & Development', 'Analysis & Research',
-  'Creative & Design', 'Business & Marketing', 'Education & Learning',
-  'Data & Technical', 'Communication & Email', 'Productivity & Planning', 'Other'
-];
-
 export function cleanTitle(raw) {
   let t = raw.replace(/^['"]+|['"]+$/g, '');
   t = t.replace(/^(?:Title|Suggested\s+title|Here\s+is)[:\s]+/i, '');
@@ -302,10 +335,10 @@ export function cleanTitle(raw) {
 export function cleanCategory(raw) {
   const c = raw.replace(/^['"•\-*]+|['"•\-*]+$/g, '').trim();
   for (const cat of CATEGORIES) {
-    if (c.toLowerCase() === cat.toLowerCase()) return cat;
+    if (c.toLowerCase() === cat.name.toLowerCase()) return cat.name;
   }
   for (const cat of CATEGORIES) {
-    if (c.toLowerCase().includes(cat.split(/\s+/)[0].toLowerCase())) return cat;
+    if (c.toLowerCase().includes(cat.name.split(/\s+/)[0].toLowerCase())) return cat.name;
   }
   return 'Other';
 }
@@ -320,9 +353,14 @@ export function looksLikeResponseInsteadOfPrompt(text) {
 // ---------------------------
 
 export async function checkConnection() {
+  // COMMENT: Hoist settings out of try so the stored model is always reported,
+  // even when the fetch throws (CORS preflight failure, Ollama not running, etc.).
+  // Previously the catch path returned the hardcoded DEFAULT_MODEL, which made the
+  // top-right status show the wrong model whenever the connection failed.
+  const settings = await getOllamaSettings();
+  const baseUrl = settings.ollamaUrl || DEFAULTS.url;
+  const storedModel = settings.ollamaModel || DEFAULT_MODEL;
   try {
-    const settings = await getOllamaSettings();
-    const baseUrl = settings.ollamaUrl || 'http://localhost:11434';
     const headers = {
       ...(settings.ollamaBearerToken ? { Authorization: `Bearer ${settings.ollamaBearerToken}` } : {})
     };
@@ -330,11 +368,11 @@ export async function checkConnection() {
       signal: AbortSignal.timeout(5000),
       ...(Object.keys(headers).length > 0 ? { headers } : {})
     });
-    if (!res.ok) return { connected: false, models: [], model: settings.ollamaModel || DEFAULT_MODEL, error: `HTTP ${res.status}` };
+    if (!res.ok) return { connected: false, models: [], model: storedModel, error: `HTTP ${res.status}` };
     const data = await res.json();
-    return { connected: true, models: data.models?.map(m => m.name) || [], model: settings.ollamaModel || DEFAULT_MODEL, error: null };
+    return { connected: true, models: data.models?.map(m => m.name) || [], model: storedModel, error: null };
   } catch (e) {
-    return { connected: false, models: [], model: DEFAULT_MODEL, error: e.message };
+    return { connected: false, models: [], model: storedModel, error: e.message };
   }
 }
 

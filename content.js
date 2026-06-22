@@ -176,7 +176,7 @@ const HOT_CORNER_INDICATOR_LARGE_PX = 30;
  * @param {Object<string,Function>} [options.eventListeners]
  * @returns {HTMLElement}
  */
-const createEl = (tag, { id, className, styles, attributes, innerHTML, eventListeners } = {}) => {
+const createEl = (tag, { id, className, styles, attributes, innerHTML, eventListeners } = {}, children = null) => {
   const el = document.createElement(tag);
   if (id) el.id = id;
   if (className) el.className = className;
@@ -184,6 +184,13 @@ const createEl = (tag, { id, className, styles, attributes, innerHTML, eventList
   if (attributes) Object.entries(attributes).forEach(([k, v]) => el.setAttribute(k, v));
   if (innerHTML) el.innerHTML = innerHTML;
   if (eventListeners) Object.entries(eventListeners).forEach(([evt, handler]) => el.addEventListener(evt, handler));
+  if (children != null) {
+    const arr = Array.isArray(children) ? children : [children];
+    for (const c of arr) {
+      if (c == null || typeof c === 'function') continue;
+      el.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+    }
+  }
   return el;
 };
 window.createEl = createEl;
@@ -712,7 +719,8 @@ class PromptStorageManager {
     return await PromptStorageManager.setData('buttonPosition', pos);
   }
   static async getKeyboardShortcut() {
-    const isMac = navigator.platform.toUpperCase().includes('MAC');
+    const platform = (navigator.userAgentData?.platform ?? navigator.platform ?? '').toUpperCase();
+    const isMac = platform.includes('MAC');
     return await PromptStorageManager.getData('keyboardShortcut', {
       key: isMac ? 'p' : 'm',
       modifier: isMac ? 'metaKey' : 'ctrlKey',
@@ -1854,7 +1862,7 @@ const PromptMediator = (() => {
     try {
       await navigator.clipboard.writeText(text);
       // Show a brief toast in the page
-      const toast = createEl('div', { class: 'opm-clipboard-toast' }, [
+      const toast = createEl('div', { className: 'opm-clipboard-toast' }, [
         createEl('span', {}, ['Prompt copied to clipboard'])
       ]);
       toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;font-family:system-ui;z-index:100000;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
@@ -1995,17 +2003,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const trackUse = async () => {
           if (!uuid) return;
           try {
-            chrome.storage.local.get({ prompts_storage: null }, (data) => {
-              const store = data.prompts_storage;
-              if (store && Array.isArray(store.prompts)) {
-                const idx = store.prompts.findIndex(p => p.uuid === uuid);
-                if (idx !== -1) {
-                  store.prompts[idx].useCount = (store.prompts[idx].useCount || 0) + 1;
-                  store.prompts[idx].lastUsedAt = new Date().toISOString();
-                  chrome.storage.local.set({ prompts_storage: store });
-                }
-              }
-            });
+            const { bumpUseCount } = await import(chrome.runtime.getURL('promptStorage.js'));
+            await bumpUseCount(uuid);
           } catch { /* storage unavailable in this context, skip */ }
         };
 
