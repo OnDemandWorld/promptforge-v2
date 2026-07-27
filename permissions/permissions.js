@@ -84,59 +84,54 @@ document.addEventListener('DOMContentLoaded', function () {
     const allowedProviders = [];
 
     for (const [key, providerInfo] of Object.entries(providersMap)) {
-      const iconUrl = providerInfo.iconUrl;
       const isAllowed = providerInfo.hasPermission === 'Yes';
 
-      // For allowed providers, clicking should open their website in a new tab.
-      // For not-yet-allowed providers, the link remains "#" and we attach the
-      // permission-request listener below.
-      const elementHTML = isAllowed
-        ? `<a id="perm-${key}" class="custom-button"
-               aria-current="true" href="${providerInfo.url}" target="_blank" rel="noopener">
-              <img src="${iconUrl}" alt="${key} icon" width="32" height="32" class="custom-rounded-circle">
-              <span class="custom-mb-0">${key}</span>
-            </a>`
-        : `<a id="perm-${key}" class="custom-button"
-               aria-current="true" href="#" data-provider="${key}" data-url-pattern="${providerInfo.urlPattern}">
-              <img src="${iconUrl}" alt="${key} icon" width="32" height="32" class="custom-rounded-circle">
-              <span class="custom-mb-0">${key}</span>
-            </a>`;
+      // COMMENT: Build pills with DOM APIs, not insertAdjacentHTML — the map
+      // lives in writable chrome.storage, so a corrupted/legacy entry could
+      // previously inject markup into this extension page.
+      const pill = document.createElement('a');
+      pill.id = `perm-${key}`;
+      pill.className = 'custom-button';
+      pill.setAttribute('aria-current', 'true');
 
-      let targetContainer;
-      let needsClickListener = false;
+      const icon = document.createElement('img');
+      const iconUrl = providerInfo.iconUrl || '';
+      icon.src = /^(https?:|data:|chrome-extension:)/.test(iconUrl) ? iconUrl : '';
+      icon.alt = `${key} icon`;
+      icon.width = 32;
+      icon.height = 32;
+      icon.className = 'custom-rounded-circle';
 
-      if (providerInfo.hasPermission === 'Yes') {
-        targetContainer = permissionGrantedContainer;
+      const label = document.createElement('span');
+      label.className = 'custom-mb-0';
+      label.textContent = key;
+
+      pill.append(icon, label);
+
+      if (isAllowed) {
+        // For allowed providers, clicking opens their website in a new tab.
+        const url = providerInfo.url || '';
+        pill.href = /^https?:\/\//i.test(url) ? url : '#';
+        pill.target = '_blank';
+        pill.rel = 'noopener';
+        permissionGrantedContainer.appendChild(pill);
         allowedProviders.push({ key, providerInfo }); // Collect allowed providers
       } else {
-        targetContainer = requestPermissionContainer;
-        needsClickListener = true;
-      }
-
-      targetContainer.insertAdjacentHTML('beforeend', elementHTML);
-
-      if (needsClickListener) {
-        const element = document.getElementById(`perm-${key}`);
-        if (element) {
-          const handleProviderClick = function (event) {
-            event.preventDefault();
-
-            const providerKey = this.dataset.provider;
-            const originPattern = this.dataset.urlPattern;
-
-            chrome.permissions.request({ origins: [originPattern] }, (granted) => {
-              if (granted) {
-                // Update local providersMap and persist
-                providersMap[providerKey].hasPermission = 'Yes';
-                // Persist change; UI will refresh via storage.onChanged listener
-                chrome.storage.local.set({ aiProvidersMap: providersMap });
-              } else {
-                alert(`Permission denied for ${providerKey}`);
-              }
-            });
-          };
-          element.addEventListener('click', handleProviderClick);
-        }
+        pill.href = '#';
+        requestPermissionContainer.appendChild(pill);
+        pill.addEventListener('click', function (event) {
+          event.preventDefault();
+          chrome.permissions.request({ origins: [providerInfo.urlPattern] }, (granted) => {
+            if (granted) {
+              // Update local providersMap and persist
+              providersMap[key].hasPermission = 'Yes';
+              // Persist change; UI will refresh via storage.onChanged listener
+              chrome.storage.local.set({ aiProvidersMap: providersMap });
+            } else {
+              alert(`Permission denied for ${key}`);
+            }
+          });
+        });
       }
     }
 

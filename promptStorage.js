@@ -14,12 +14,33 @@ import { generateUUID } from './utils.js';
 export const PROMPT_STORAGE_VERSION = 3;            // v3 adds versions array
 const STORAGE_KEY = 'prompts_storage';
 const LEGACY_KEY  = 'prompts';
+// COMMENT: Cap per-prompt version history so the whole-store rewrite on every
+// edit doesn't slowly march toward the chrome.storage.local quota.
+const MAX_VERSIONS_PER_PROMPT = 100;
+
+// Keys normalisePrompt understands. Anything else is passed through untouched
+// so fields added by newer versions (e.g. `language`, sync revision metadata)
+// survive a read+write cycle on this version instead of being silently stripped.
+const KNOWN_PROMPT_KEYS = new Set([
+  'id', 'uuid', 'title', 'content', 'createdAt', 'updatedAt', 'tags',
+  'folderId', 'category', 'categoryId', 'favorite', '_archived',
+  'useCount', 'lastUsedAt', 'versions'
+]);
 
 function storageGet(keys) {
-  return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+  return new Promise((resolve, reject) => chrome.storage.local.get(keys, result => {
+    // COMMENT: Surface quota/serialization failures instead of resolving with
+    // stale data — previously a failed read/write resolved silently and callers
+    // believed a save succeeded (silent data loss).
+    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+    else resolve(result);
+  }));
 }
 function storageSet(obj) {
-  return new Promise(resolve => chrome.storage.local.set(obj, resolve));
+  return new Promise((resolve, reject) => chrome.storage.local.set(obj, () => {
+    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+    else resolve();
+  }));
 }
 
 // Normalise a single prompt
@@ -73,6 +94,10 @@ function normalisePrompt(p = {}) {
   } else {
     out.versions = [];
   }
+  // Pass through unknown keys (see KNOWN_PROMPT_KEYS).
+  for (const key of Object.keys(p)) {
+    if (!KNOWN_PROMPT_KEYS.has(key)) out[key] = p[key];
+  }
   return out;
 }
 
@@ -110,6 +135,9 @@ async function readRawStorage() {
       folders: []
     };
     await writeStore(migrated);
+    // COMMENT: Drop the legacy key once migrated — it wastes quota otherwise,
+    // and stray external writes to it used to trigger full UI rebuilds.
+    await new Promise(resolve => chrome.storage.local.remove(LEGACY_KEY, resolve));
     return migrated;
   }
   return { version: PROMPT_STORAGE_VERSION, prompts: [], folders: [] };
@@ -169,13 +197,31 @@ export async function getPrompts() {
 }
 
 export async function setPrompts(prompts) {
-  await writeStorage(prompts);
+  // COMMENT: Bulk replace must hold the write lock like every other mutation —
+  // an unlocked setPrompts racing a save/bump clobbers the other write.
+  return withLock(async () => {
+    await writeStorage(prompts);
+  });
 }
 
 export async function savePrompt({ title, content, uuid, tags = [], folderId = null, categoryId = null, category = null }) {
   return withLock(async () => {
     if (!title && !content) throw new Error('Title or content is required');
     const prompts = await getPrompts();
+    // COMMENT: Upsert on an existing uuid — previously a duplicate uuid pushed
+    // a second prompt, after which findIndex updated only the first and
+    // filter-deletes removed both.
+    const existingIdx = uuid ? prompts.findIndex(p => p.uuid === uuid) : -1;
+    if (existingIdx !== -1) {
+      prompts[existingIdx] = normalisePrompt({
+        ...prompts[existingIdx],
+        title, content, tags, folderId,
+        categoryId: categoryId || category,
+        updatedAt: new Date().toISOString()
+      });
+      await writeStorage(prompts);
+      return { success: true, prompt: prompts[existingIdx] };
+    }
     const prompt = normalisePrompt({ uuid, title, content, tags, folderId, categoryId: categoryId || category });
     // Seed version if not already set
     if (prompt.versions.length === 0 && prompt.content) {
@@ -235,11 +281,22 @@ export async function mergePrompts(imported) {
     const map = new Map(base.map(p => [p.uuid, p]));
     imported.forEach(raw => {
       const p = normalisePrompt(raw);
-      const existing = map.get(p.uuid);
+      // COMMENT: Match by uuid when present; when the imported record has no
+      // uuid (normalisePrompt minted a fresh one), fall back to an exact
+      // title+content match so re-importing the same file merges instead of
+      // duplicating.
+      const byContent = !raw.uuid
+        ? Array.from(map.values()).find(e => e.title === p.title && e.content === p.content)
+        : undefined;
+      const existing = map.get(p.uuid) || byContent;
       if (existing) {
         const oldDate = new Date(existing.updatedAt || existing.createdAt);
         const newDate = new Date(p.updatedAt || p.createdAt);
-        if (newDate > oldDate) map.set(p.uuid, p);
+        // COMMENT: Guard invalid dates — NaN comparisons are always false and
+        // used to silently keep the older record.
+        if (!isNaN(newDate) && (isNaN(oldDate) || newDate > oldDate)) {
+          map.set(existing.uuid, { ...p, uuid: existing.uuid });
+        }
       } else {
         map.set(p.uuid, p);
       }
@@ -271,6 +328,9 @@ export async function addVersion(promptUuid, content, source = 'manual_edit', me
     };
     if (!prompts[idx].versions) prompts[idx].versions = [];
     prompts[idx].versions.push(version);
+    if (prompts[idx].versions.length > MAX_VERSIONS_PER_PROMPT) {
+      prompts[idx].versions = prompts[idx].versions.slice(-MAX_VERSIONS_PER_PROMPT);
+    }
     // Also update main content
     prompts[idx].content = content;
     prompts[idx].updatedAt = version.createdAt;
@@ -313,20 +373,27 @@ export async function setFolders(folders) {
 
 export async function saveFolder({ name, parentId = null, id }) {
   if (!name || typeof name !== 'string') throw new Error('Folder name is required');
-  const folders = await getFolders();
-  const folder = normaliseFolder({ id, name: name.trim(), parentId });
-  folders.push(folder);
-  await setFolders(folders);
-  return folder;
+  // COMMENT: read+modify+write inside ONE lock — the old shape read folders
+  // outside the lock (TOCTOU), and withLock is not reentrant, so we can't go
+  // through setFolders() from in here.
+  return withLock(async () => {
+    const { prompts, folders } = await readRawStorage();
+    const folder = normaliseFolder({ id, name: name.trim(), parentId });
+    folders.push(folder);
+    await writeStore({ version: PROMPT_STORAGE_VERSION, prompts, folders });
+    return folder;
+  });
 }
 
 export async function updateFolder(id, partial) {
-  const folders = await getFolders();
-  const idx = folders.findIndex(f => f.id === id);
-  if (idx === -1) throw new Error('Folder not found');
-  folders[idx] = normaliseFolder({ ...folders[idx], ...partial, updatedAt: new Date().toISOString() });
-  await setFolders(folders);
-  return folders[idx];
+  return withLock(async () => {
+    const { prompts, folders } = await readRawStorage();
+    const idx = folders.findIndex(f => f.id === id);
+    if (idx === -1) throw new Error('Folder not found');
+    folders[idx] = normaliseFolder({ ...folders[idx], ...partial, updatedAt: new Date().toISOString() });
+    await writeStore({ version: PROMPT_STORAGE_VERSION, prompts, folders });
+    return folders[idx];
+  });
 }
 
 export async function deleteFolder(id) {
@@ -353,20 +420,30 @@ export async function movePromptToFolder(promptUuid, folderId = null) {
 export async function addTagToPrompt(promptUuid, tag) {
   const clean = typeof tag === 'string' ? tag.trim() : '';
   if (!clean) return await getPrompts();
-  const prompts = await getPrompts();
-  const idx = prompts.findIndex(p => p.uuid === promptUuid);
-  if (idx === -1) throw new Error('Prompt not found');
-  const set = new Set(prompts[idx].tags || []);
-  set.add(clean);
-  return await updatePrompt(promptUuid, { tags: Array.from(set) });
+  // COMMENT: Compute the new tag set inside the locked mutation — an unlocked
+  // read followed by updatePrompt lost one of two concurrent tag edits.
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === promptUuid);
+    if (idx === -1) throw new Error('Prompt not found');
+    const set = new Set(prompts[idx].tags || []);
+    set.add(clean);
+    prompts[idx] = normalisePrompt({ ...prompts[idx], tags: Array.from(set), updatedAt: new Date().toISOString() });
+    await writeStorage(prompts);
+    return prompts[idx];
+  });
 }
 
 export async function removeTagFromPrompt(promptUuid, tag) {
-  const prompts = await getPrompts();
-  const idx = prompts.findIndex(p => p.uuid === promptUuid);
-  if (idx === -1) throw new Error('Prompt not found');
-  const next = (prompts[idx].tags || []).filter(t => t !== tag);
-  return await updatePrompt(promptUuid, { tags: next });
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === promptUuid);
+    if (idx === -1) throw new Error('Prompt not found');
+    const next = (prompts[idx].tags || []).filter(t => t !== tag);
+    prompts[idx] = normalisePrompt({ ...prompts[idx], tags: next, updatedAt: new Date().toISOString() });
+    await writeStorage(prompts);
+    return prompts[idx];
+  });
 }
 
 export async function setTagsForPrompt(promptUuid, tags = []) {
@@ -420,8 +497,9 @@ export async function importPrompts(source) {
 export function onPromptsChanged(callback) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes[STORAGE_KEY] || changes[LEGACY_KEY]) {
-      getPrompts().then(callback);
+    // COMMENT: The legacy key is removed after migration; no longer watched.
+    if (changes[STORAGE_KEY]) {
+      getPrompts().then(callback).catch(err => console.error('[PromptForge] onPromptsChanged read failed:', err));
     }
   });
 }

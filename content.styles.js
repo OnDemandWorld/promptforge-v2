@@ -35,7 +35,9 @@ var UI_STYLES = window.UI_STYLES || {
 };
 window.UI_STYLES = UI_STYLES;
 
-var PROMPT_CLOSE_DELAY = typeof window.PROMPT_CLOSE_DELAY === 'number' ? window.PROMPT_CLOSE_DELAY : 10000;
+// COMMENT: 10000ms kept the panel hovering over the page for ten seconds
+// after mouseleave — almost certainly a 10x typo; 1000ms is the intended UX.
+var PROMPT_CLOSE_DELAY = typeof window.PROMPT_CLOSE_DELAY === 'number' ? window.PROMPT_CLOSE_DELAY : 1000;
 window.PROMPT_CLOSE_DELAY = PROMPT_CLOSE_DELAY;
 
 var SELECTORS = window.SELECTORS || {

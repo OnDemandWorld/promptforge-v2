@@ -6,7 +6,7 @@
 // 3. On app open, user can merge from the backup file
 // 4. If the user uses iCloud/Dropbox, the backup file syncs across machines
 
-import { PROMPT_STORAGE_VERSION } from './promptStorage.js';
+import { PROMPT_STORAGE_VERSION, getFolders, getPrompts, importPrompts } from './promptStorage.js';
 
 const BACKUP_FILENAME = 'promptforge-backup.json';
 const BACKUP_FOLDER = 'promptforge';
@@ -36,9 +36,12 @@ async function saveSettings(settings) {
  * @returns {{ mode: string, enabled: boolean, filePath: string|null }}
  */
 export async function pickBackupFile(prompts) {
+  let folders = [];
+  try { folders = await getFolders(); } catch { /* prompts-only backup is better than none */ }
   const data = JSON.stringify({
     version: PROMPT_STORAGE_VERSION,
     prompts,
+    folders,
     exportedAt: new Date().toISOString()
   }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
@@ -77,10 +80,12 @@ export async function pickBackupFile(prompts) {
             return;
           }
           if (item.state === 'interrupted' || item.state === 'cancelled') {
+            // COMMENT: A cancelled/interrupted save-as must NOT leave backups
+            // "enabled" — the old code silently enabled writes to the default
+            // Downloads path when the user said no.
             clearInterval(poll);
             URL.revokeObjectURL(url);
-            saveSettings({ mode: 'file', enabled: true, downloadPath: BACKUP_PATH });
-            resolve({ mode: 'file', enabled: true, filePath: BACKUP_PATH });
+            resolve({ mode: 'file', enabled: false, filePath: null });
             return;
           }
         }
@@ -90,8 +95,7 @@ export async function pickBackupFile(prompts) {
       if (attempts >= 30) {
         clearInterval(poll);
         URL.revokeObjectURL(url);
-        saveSettings({ mode: 'file', enabled: true, downloadPath: BACKUP_PATH });
-        resolve({ mode: 'file', enabled: true, filePath: BACKUP_PATH });
+        resolve({ mode: 'file', enabled: false, filePath: null });
       }
     }, 500);
   });
@@ -112,17 +116,23 @@ export async function clearBackupFile() {
 }
 
 /**
- * Write current prompts to backup.
- * Always writes to Downloads/promptforge/promptforge-backup.json (overwrites).
+ * Write current prompts (and folders) to the backup file.
+ * Writes to the stored backup path (default: Downloads/promptforge/promptforge-backup.json).
  * @param {Array} prompts - Array of prompt objects
  */
 export async function writeBackup(prompts) {
   const settings = await getSettings();
   if (!settings || !settings.enabled) return;
 
+  // COMMENT: Folders were previously excluded, so any restore silently lost
+  // the user's folder structure.
+  let folders = [];
+  try { folders = await getFolders(); } catch { /* prompts-only backup is better than none */ }
+
   const data = JSON.stringify({
     version: PROMPT_STORAGE_VERSION,
     prompts,
+    folders,
     exportedAt: new Date().toISOString()
   }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
@@ -130,10 +140,15 @@ export async function writeBackup(prompts) {
 
   chrome.downloads.download({
     url,
-    filename: BACKUP_PATH,
+    filename: settings.downloadPath || BACKUP_PATH,
     saveAs: false,
     conflictAction: 'overwrite'
-  }, () => setTimeout(() => URL.revokeObjectURL(url), 1000));
+  }, () => {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (chrome.runtime.lastError) {
+      console.error('[PromptForge] Backup write failed:', chrome.runtime.lastError.message);
+    }
+  });
 }
 
 /**
@@ -156,7 +171,9 @@ export async function autoImport() {
       try {
         const text = await input.files[0].text();
         const parsed = JSON.parse(text);
-        resolve(parsed.prompts || []);
+        // COMMENT: Resolve the whole payload (not just .prompts) so folders
+        // restore too — importPrompts handles both shapes.
+        resolve(parsed);
       } catch {
         resolve(null);
       }
@@ -173,11 +190,27 @@ export async function autoImport() {
     }, 60000);
   });
 
-  if (!backupPrompts || backupPrompts.length === 0) return 0;
+  if (!backupPrompts) return 0;
+  if (Array.isArray(backupPrompts) && backupPrompts.length === 0) return 0;
 
-  const { mergePrompts } = await import('./promptStorage.js');
-  const merged = await mergePrompts(backupPrompts);
-  return merged.length;
+  const merged = await importPrompts(backupPrompts);
+  return Array.isArray(merged) ? merged.length : 0;
+}
+
+/**
+ * Debounced backup trigger shared by every caller (popup.js, app.js, and the
+ * storage-change listener below). COMMENT: Previously popup.js and this file
+ * each hand-rolled the same 2s debounce; now there's one implementation, and
+ * it always backs up the freshest state (prompts + folders).
+ */
+let _backupTimer = null;
+export function scheduleBackup() {
+  clearTimeout(_backupTimer);
+  _backupTimer = setTimeout(async () => {
+    try {
+      writeBackup(await getPrompts()).catch(() => {});
+    } catch { /* storage unavailable; skip this round */ }
+  }, 2000);
 }
 
 /**
@@ -192,13 +225,7 @@ export function startAutoBackup() {
   }
   _autoBackupListener = (changes, area) => {
     if (area !== 'local' || !changes.prompts_storage) return;
-    const store = changes.prompts_storage.newValue;
-    if (store && Array.isArray(store.prompts)) {
-      clearTimeout(window._pfbackupTimer);
-      window._pfbackupTimer = setTimeout(() => {
-        writeBackup(store.prompts).catch(() => {});
-      }, 2000);
-    }
+    scheduleBackup();
   };
   chrome.storage.onChanged.addListener(_autoBackupListener);
 }

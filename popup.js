@@ -1,18 +1,7 @@
 // popup.js
 import * as PromptStorage from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
-import { writeBackup } from './autoBackup.js';
-
-// ─── Auto backup trigger (debounced) ──────────────────────────────────────
-
-function triggerAutoBackup() {
-  clearTimeout(window._pfbackupTimer);
-  window._pfbackupTimer = setTimeout(() => {
-    PromptStorage.getPrompts().then(prompts => {
-      writeBackup(prompts).catch(() => {});
-    });
-  }, 2000);
-}
+import { scheduleBackup } from './autoBackup.js';
 
 // ─── Status ───────────────────────────────────────────────────────────────
 async function initStatus() {
@@ -35,9 +24,11 @@ const searchInput = document.getElementById('popup-search');
 const listEl = document.getElementById('popup-list');
 let debounceTimer;
 
-searchInput.addEventListener('input', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(loadPrompts, 200); });
+// COMMENT: Guard element lookups — a missing element used to kill init entirely.
+searchInput?.addEventListener('input', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(loadPrompts, 200); });
 
 async function loadPrompts() {
+  if (!listEl) return;
   listEl.innerHTML = '';
   const searchVal = searchInput.value.trim();
   let prompts = await PromptStorage.getPrompts();
@@ -76,7 +67,7 @@ async function loadPrompts() {
       try {
         await navigator.clipboard.writeText(p.content);
         await PromptStorage.bumpUseCount(p.uuid);
-        triggerAutoBackup();
+        scheduleBackup();
         h4.textContent = 'Copied! ✓';
         h4.style.color = 'var(--color-success)';
         setTimeout(() => window.close(), 800);
@@ -90,7 +81,7 @@ async function loadPrompts() {
 }
 
 // Open App
-document.getElementById('open-app').addEventListener('click', (e) => {
+document.getElementById('open-app')?.addEventListener('click', (e) => {
   e.preventDefault();
   chrome.runtime.sendMessage({ type: 'OPEN_APP_TAB' });
 });

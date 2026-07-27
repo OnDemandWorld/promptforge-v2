@@ -4,6 +4,56 @@ All notable changes to PromptForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-07-27
+
+### Highlights
+
+- **The floating panel's AI features work again** — the Versions, Improve, and Variants buttons threw on every click in 2.1.0 (they called methods on the wrong object), and even via the correct path the operations could never run (`ai-operations.js` had no ES exports). Version history was also never written from the panel because the storage adapter exposed only 6 of 15 methods. All three paths fixed and verified.
+- **Security hardening** — closed a stored-XSS vector reachable via Import, narrowed web-accessible resources from all sites to the 19 supported providers, and hardened the permissions page against corrupted storage data.
+- **Silent data loss fixed** — storage quota/serialization failures no longer resolve as successes; backups include folders and respect a cancelled save dialog.
+- **Reliability across the board** — injection races, listener leaks/doubling, SPA navigation races, dark-mode theming of the version modal, and ~25 more (full list below). Roadmap for v3 (multilingual prompts, folder sync) added in `V3_PLAN.md`.
+
+### Security
+
+- **Stored XSS via tags.** Tags were rendered with `innerHTML`, and tag normalization (`trim/lowercase/hyphenate`) let spaceless payloads such as `<svg/onload=…>` survive the Import flow, executing in the isolated world with full `chrome.storage.local` access. Tags, tag suggestions, tag-management labels, and version-history rows now render as text nodes; the app's version modals were rebuilt with DOM APIs (the old innerHTML escaping covered only `<`).
+- **`web_accessible_resources` narrowed** from `<all_urls>` to the 19 provider origins — arbitrary websites can no longer fetch the extension's modules (including `ai-operations.js` and `ollama-service.js`).
+- **Permissions page hardened** — provider pills are built with DOM APIs instead of `insertAdjacentHTML` on values from the writable `aiProvidersMap` storage key, with `http(s)` scheme guards on links and icons.
+- **Latent privacy-contract risk removed** — `InputBoxHandler.getInputContent()` (a dead method that reads host-page input content, exported one caller away from a violation) was deleted; verified zero callers.
+
+### Fixed
+
+- **Dead panel AI buttons** — `content.js` called `PromptUI.showVersionHistory/improvePrompt/generateVariants/autoSuggestMetadata`, but those methods live on `PromptUIManager`; every click threw `TypeError`.
+- **`ai-operations.js` had no exports** — `content.js` destructures named exports from the dynamic import and always received `undefined`.
+- **Version history never written from the panel** — the `_ps()` storage adapter exposed 6 of 15 methods (`addVersion`, `getVersions`, `restoreVersion`, `bumpUseCount` missing) and failures were swallowed by empty `catch {}`. The adapter now exposes the full module API.
+- **Auto-suggest metadata could never run** — it early-returned unless the title was empty, but the create form requires a title. It now fills only fields the user left empty and never overwrites.
+- **Silent data loss on storage failure** — `storageGet`/`storageSet` resolved without checking `chrome.runtime.lastError`; quota errors looked like successful saves. They now reject.
+- **Concurrency** — `setPrompts` ran without the write lock; folder and tag helpers read outside the lock (TOCTOU); `savePrompt` with a duplicate uuid pushed a corrupting second copy (now upserts); re-importing files without uuids duplicated instead of merging; invalid dates silently kept stale records.
+- **Unbounded version growth** — per-prompt version history is capped at 100 entries (the whole store is rewritten on every edit).
+- **Backups** — payload now includes folders (restore previously lost folder structure); cancelling the save-as dialog no longer leaves backups "enabled"; download errors are checked; the popup and app duplicated the debounce logic, now unified in one exported `scheduleBackup()`.
+- **Double injection** — the service worker's `onUpdated` path ran a dead probe instead of the real init-flag pre-check used by `onAdded`; the content script's top-level `chrome.runtime.onMessage` and `matchMedia` listeners registered outside the init guard. Doubled listeners caused double prompt insertion and a dead-feeling keyboard shortcut. All guarded.
+- **Panel hover delay was 10 seconds** (`PROMPT_CLOSE_DELAY = 10000`, a 10× typo) — now 1 s.
+- **`hideEl` timer race** — a quick reopen within the hide delay left a stale timer that hid the panel mid-interaction; timers are now tracked, cancellable, and re-check visibility.
+- **TagUI listener leak** — every tag input added three permanent document/window listeners; now one shared listener set per page.
+- **SPA robustness** — the variable-input form re-acquires the input box at submit time (detached-node inserts were silent no-ops); the MutationObserver watches `documentElement` instead of `<main>` (SPAs replace it); the provider matcher in `inputBoxHandler` is anchored/escaped (substring matches like `chatXopenaiYcom` passed before), caches the provider list, and shadow-DOM search truly recurses.
+- **Dark mode** — the version modal and edit-form action buttons used CSS variables (`--opm-bg/--opm-text/--opm-border`) that don't exist in the theme sheet, leaving them permanently light. Colors now resolve from the current mode.
+- **App page** — `parseInt('')` wrote `NaN` into settings (context window, variant count); a dead `categories` storage key could white-screen Library and Editor on legacy installs; imported categories are preserved instead of silently nulled on the next save; send-dropdowns close on outside click/Escape; a malformed editor hash (`#/editor/%ff`) no longer blanks the whole app; Copy uses the atomic `bumpUseCount`; toast duration arguments are honored; the tag input strips all commas; `relativeTime` guards invalid dates; leaving the editor mid-stream aborts the Improve request (per-session controller — the shared one let an old stream kill a new session's Stop button); custom Ollama URLs trigger a host-permission request instead of failing silently.
+- **Settings hygiene** — "Delete All Data" removes only data keys; `local.clear()` previously wiped the provider map (integrations UI showed disabled while permissions stayed granted), theme, and onboarding, and an enabled auto-backup would have rewritten the backup file with the empty library.
+- **Service worker** — context-menu rebuilds are debounced, capped (30 prompts), and error-checked (every `bumpUseCount` used to rebuild the whole menu); async message branches `.catch` into `sendResponse` instead of hanging senders; provider-URL regex escaping fixed; a failed provider-map rebuild stores `{}` instead of `null`.
+- Unknown prompt keys now pass through normalisation instead of being silently stripped — groundwork for the v3 `language` field and sync metadata.
+- Copy: permissions page said "18 LLMs"; there are 19.
+
+### Removed
+
+- Legacy `prompts` storage key is deleted after migration (was kept forever, wasting quota).
+- `InputBoxHandler.getInputContent()` (dead, privacy-risk).
+- Dead `createSettingSection` helper in `app.js`.
+
+### Migration / Upgrade notes
+
+- **No data migration required.** Reload the unpacked extension after updating.
+- Backups written by 2.1.1 include `folders`; older backup files restore fine (folders default to empty).
+- See `V3_PLAN.md` for the audited roadmap: content-script bundling, service-worker Ollama proxy (replacing the DNR Origin-rewrite), multilingual prompts (en/zh-HK/zh-CN), and folder-based sync.
+
 ## [2.1.0] - 2026-06-23
 
 ### Highlights

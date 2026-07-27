@@ -22,7 +22,7 @@ function _toast(msg, type = 'info', duration = 2500) {
  * @param {string} promptUuid
  * @param {HTMLElement|null} listEl
  */
-async function improvePrompt(promptUuid, listEl) {
+export async function improvePrompt(promptUuid, listEl) {
   try {
     const { improvePrompt: ollamaImprove, looksLikeResponseInsteadOfPrompt } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
@@ -70,7 +70,7 @@ async function improvePrompt(promptUuid, listEl) {
  * @param {string} promptUuid
  * @param {HTMLElement|null} listEl
  */
-async function generateVariants(promptUuid, listEl) {
+export async function generateVariants(promptUuid, listEl) {
   try {
     const { generateVariants: ollamaVariants } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
@@ -101,7 +101,7 @@ async function generateVariants(promptUuid, listEl) {
  * @param {string} promptUuid
  * @param {HTMLElement|null} listEl
  */
-async function autoSuggestMetadata(promptUuid, listEl) {
+export async function autoSuggestMetadata(promptUuid, listEl) {
   try {
     const { suggestAllMetadata } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
@@ -111,15 +111,22 @@ async function autoSuggestMetadata(promptUuid, listEl) {
     const data = await chrome.storage.local.get({ autoSuggestMetadata: true });
     if (!data.autoSuggestMetadata) return;
 
-    // Only suggest on first save (title is empty or default)
-    if (prompt.title && prompt.title !== 'Untitled Prompt') return;
-
     const metadata = await suggestAllMetadata(prompt.content);
     const updates = {};
-    if (metadata.title && metadata.title !== 'Untitled Prompt') updates.title = metadata.title;
-    if (metadata.category && metadata.category !== 'Other') updates.category = metadata.category;
-    const filteredTags = metadata.tags.filter(t => t !== 'untagged');
-    if (filteredTags.length > 0) updates.tags = filteredTags;
+    // COMMENT: Only fill fields the user left empty — never overwrite a
+    // user-provided title/tags/category. (The old gate returned early whenever
+    // a title existed, and the create form requires one, so this feature could
+    // never run.)
+    if ((!prompt.title || prompt.title === 'Untitled Prompt') && metadata.title && metadata.title !== 'Untitled Prompt') {
+      updates.title = metadata.title;
+    }
+    if (!prompt.category && metadata.category && metadata.category !== 'Other') {
+      updates.category = metadata.category;
+    }
+    if (!Array.isArray(prompt.tags) || prompt.tags.length === 0) {
+      const filteredTags = metadata.tags.filter(t => t !== 'untagged');
+      if (filteredTags.length > 0) updates.tags = filteredTags;
+    }
 
     if (Object.keys(updates).length > 0) {
       const ps = await PromptStorageManager._ps();
@@ -129,5 +136,6 @@ async function autoSuggestMetadata(promptUuid, listEl) {
   } catch (e) { console.warn('Auto-suggest failed:', e); }
 }
 
-// COMMENT: Expose globally so content.js and PromptUIManager can reference them
+// COMMENT: Kept for backwards compatibility — content.js now imports the
+// named ES exports above via dynamic import().
 window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata };

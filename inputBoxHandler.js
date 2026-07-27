@@ -4,31 +4,42 @@
 /**
  * Class to handle input box detection and interactions on supported websites.
  */
+// COMMENT: Cache the provider list — getInputBox() runs on every click/poll
+// and used to re-fetch the bundled JSON each time. Not cached on failure
+// (stays null) so a transient error doesn't poison lookups for the tab's life.
+let _providersCache = null;
+async function loadProviders() {
+  if (_providersCache) return _providersCache;
+  try {
+    const response = await fetch(chrome.runtime.getURL('llm_providers.json'));
+    if (response.ok) {
+      const data = await response.json();
+      _providersCache = data.llm_providers || [];
+    }
+  } catch (error) {
+    console.error('Failed to load llm_providers.json:', error);
+  }
+  return _providersCache || [];
+}
+
 class InputBoxHandler {
   /**
    * Detects and retrieves the input box from supported websites.
    * @returns {HTMLElement|null} The input box element or null if not found.
    */
   static async getInputBox() {
-
-    // Try to get providers from the JSON file
-    let providers = [];
-    try {
-      const response = await fetch(chrome.runtime.getURL('llm_providers.json'));
-      if (response.ok) {
-        const data = await response.json();
-        providers = data.llm_providers || [];
-      }
-    } catch (error) {
-      console.error('Failed to load llm_providers.json:', error);
-    }
+    const providers = await loadProviders();
 
     // Dynamic matching using llm_providers.json
     for (const provider of providers) {
       if (provider.pattern) {
-        // Convert pattern to a URL matching format
-        const pattern = provider.pattern.replace(/\*/g, '.*');
-        const regex = new RegExp(pattern, 'i');
+        // COMMENT: Escape regex metachars, convert wildcards, and anchor —
+        // the old unanchored/unescaped pattern matched substrings
+        // (chatXopenaiYcom would pass) and threw on patterns with +, (, etc.
+        const pattern = provider.pattern
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          .replace(/\\\*/g, '.*');
+        const regex = new RegExp(`^${pattern}`, 'i');
         if (regex.test(window.location.href)) {
           if (provider.element_selector) {
             const selectors = provider.element_selector.split(',').map(s => s.trim());
@@ -52,23 +63,18 @@ class InputBoxHandler {
   }
 
   /**
-   * Search for an element in all shadow DOMs (including nested).
+   * Search for an element in all shadow DOMs, recursing to any depth.
    */
-  static _findInShadowDom(selector) {
-    const allElements = document.querySelectorAll('*');
-    for (const el of allElements) {
-      if (el.shadowRoot) {
-        const found = el.shadowRoot.querySelector(selector);
-        if (found) return found;
-        // Recurse into nested shadow roots
-        const nested = el.shadowRoot.querySelectorAll('*');
-        for (const nestedEl of nested) {
-          if (nestedEl.shadowRoot) {
-            const deepFound = nestedEl.shadowRoot.querySelector(selector);
-            if (deepFound) return deepFound;
-          }
-        }
-      }
+  static _findInShadowDom(selector, root = document) {
+    // COMMENT: True recursion — the old version hardcoded two shadow levels
+    // and missed deeper nesting. Closed roots remain invisible by design.
+    const hosts = root.querySelectorAll('*');
+    for (const el of hosts) {
+      if (!el.shadowRoot) continue;
+      const found = el.shadowRoot.querySelector(selector);
+      if (found) return found;
+      const deep = InputBoxHandler._findInShadowDom(selector, el.shadowRoot);
+      if (deep) return deep;
     }
     return null;
   }
@@ -90,7 +96,7 @@ class InputBoxHandler {
       // Timeout after 10 seconds
       setTimeout(() => {
         clearInterval(checkExist);
-        reject('Input box not found after 10 seconds.');
+        reject(new Error('Input box not found after 10 seconds.'));
       }, 10000);
     });
   }
@@ -351,20 +357,6 @@ class InputBoxHandler {
     } catch (error) {
       console.error('Error inserting prompt:', error, { content, inputBox, promptList });
     }
-  }
-
-  /**
-   * Retrieves the content from the input box.
-   * @param {HTMLElement} inputBox - The input box element.
-   * @returns {string} The content of the input box.
-   */
-  static getInputContent(inputBox) {
-    if (inputBox.contentEditable === 'true') {
-      return inputBox.innerText;
-    } else if (inputBox.tagName.toLowerCase() === 'textarea') {
-      return inputBox.value;
-    }
-    return '';
   }
 }
 

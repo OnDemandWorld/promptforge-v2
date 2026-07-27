@@ -83,18 +83,25 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         if (!originPattern) continue;
         // Inject on ALL LLM sites regardless of permissions
         // The content script will check permissions at runtime for injection vs clipboard
+        // COMMENT: Escape every regex metachar, then convert the escaped
+        // wildcard back — the old escaper missed +, (, ?, etc.
         const regexPattern = originPattern
-          .replace(/\\/g, '\\\\')
-          .replace(/[.]/g, '\\.')
-          .replace(/[*]/g, '.*');
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          .replace(/\\\*/g, '.*');
         const urlRegex = new RegExp(`^${regexPattern}`);
 
         if (urlRegex.test(tab.url)) {
           try {
-            await chrome.scripting.executeScript({
-              target: { tabId },
-              func: () => { window.__PF_INJECTED_CHECK = true; }
-            });
+            // COMMENT: Pre-check the init flag (same guard onAdded uses) so the
+            // onUpdated/onAdded race can't double-inject. The previous probe
+            // wrote a flag nothing ever read.
+            try {
+              const [{ result: alreadyInjected }] = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: () => !!window.__OPM_PROMPT_MANAGER_INITIALIZED
+              });
+              if (alreadyInjected) break;
+            } catch { /* tab not accessible yet, fall through to inject */ }
             await chrome.scripting.executeScript({
               target: { tabId },
               files: ['inputBoxHandler.js', 'content.styles.js', 'content.shared.js', 'content.js']
@@ -154,46 +161,66 @@ async function checkProviderPermissions() {
     return providersMap;
   } catch (error) {
     console.error('Error checking permissions:', error);
-    return null;
+    // COMMENT: Return {} (not null) so consumers don't have to special-case a
+    // failed rebuild and aiProvidersMap is never stored as null.
+    return {};
   }
 }
 
 // ---------------------------
 // Context Menu
 // ---------------------------
+// COMMENT: Rebuilds used to fire on every prompts_storage change — including
+// each bumpUseCount — and overlapping removeAll/create runs raced (duplicate
+// id lastError spam). Large libraries also produced unbounded menu items.
+// Debounce the rebuild and cap the per-prompt items.
+const MENU_PROMPT_CAP = 30;
+let menuRebuildTimer = null;
+function scheduleContextMenuRebuild() {
+  if (menuRebuildTimer) clearTimeout(menuRebuildTimer);
+  menuRebuildTimer = setTimeout(() => {
+    menuRebuildTimer = null;
+    createPromptContextMenu().catch(e => console.error('Context menu rebuild failed:', e));
+  }, 300);
+}
+
 async function createPromptContextMenu() {
-  chrome.contextMenus.removeAll(() => {
+  const ignoreLastError = () => { if (chrome.runtime.lastError) { /* benign during overlapping rebuilds */ } };
+  await new Promise(resolve => chrome.contextMenus.removeAll(resolve));
+  chrome.contextMenus.create({
+    id: 'open-promptforge',
+    title: 'Open PromptForge',
+    contexts: ['all']
+  }, ignoreLastError);
+  chrome.contextMenus.create({
+    id: 'save-as-prompt',
+    parentId: 'open-promptforge',
+    title: 'Save new prompt',
+    contexts: ['selection']
+  }, ignoreLastError);
+  chrome.contextMenus.create({
+    id: 'save-separator',
+    parentId: 'open-promptforge',
+    type: 'separator',
+    contexts: ['selection']
+  }, ignoreLastError);
+  let prompts = [];
+  try {
+    prompts = await getPrompts();
+  } catch (e) {
+    console.error('Failed to load prompts for context menu:', e);
+  }
+  prompts.slice(0, MENU_PROMPT_CAP).forEach((prompt) => {
     chrome.contextMenus.create({
-      id: 'open-promptforge',
-      title: 'Open PromptForge',
+      id: 'prompt-' + prompt.uuid,
+      parentId: 'open-promptforge',
+      title: prompt.title || 'Untitled Prompt',
       contexts: ['all']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-prompt',
-      parentId: 'open-promptforge',
-      title: 'Save new prompt',
-      contexts: ['selection']
-    });
-    chrome.contextMenus.create({
-      id: 'save-separator',
-      parentId: 'open-promptforge',
-      type: 'separator',
-      contexts: ['selection']
-    });
-    getPrompts().then(prompts => {
-      prompts.forEach((prompt) => {
-        chrome.contextMenus.create({
-          id: 'prompt-' + prompt.uuid,
-          parentId: 'open-promptforge',
-          title: prompt.title || 'Untitled Prompt',
-          contexts: ['all']
-        });
-      });
-    });
+    }, ignoreLastError);
   });
 }
 
-onPromptsChanged(() => createPromptContextMenu());
+onPromptsChanged(() => scheduleContextMenuRebuild());
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'save-as-prompt') {
@@ -263,17 +290,25 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // ---------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_APP_TAB') {
-    openOrFocusAppTab(message.path || '').then(tab => sendResponse({ tabId: tab.id }));
+    // COMMENT: Every async branch needs a .catch — a rejection used to leave
+    // sendResponse uncalled, hanging the sender with an unhandled rejection.
+    openOrFocusAppTab(message.path || '')
+      .then(tab => sendResponse({ tabId: tab.id }))
+      .catch(e => sendResponse({ error: e.message }));
     return true;
   }
 
   if (message?.type === 'CHECK_OLLAMA') {
-    checkConnection().then(result => sendResponse(result));
+    checkConnection()
+      .then(result => sendResponse(result))
+      .catch(e => sendResponse({ connected: false, models: [], model: null, error: e.message }));
     return true;
   }
 
   if (message?.type === 'QUERY_AI_SITE_TABS') {
-    queryAiSiteTabs().then(tabs => sendResponse({ tabs }));
+    queryAiSiteTabs()
+      .then(tabs => sendResponse({ tabs }))
+      .catch(e => sendResponse({ tabs: [], error: e.message }));
     return true;
   }
 });

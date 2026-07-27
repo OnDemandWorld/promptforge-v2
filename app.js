@@ -19,6 +19,10 @@ function $$(sel, parent = document) { return Array.from(parent.querySelectorAll(
 function closeAllSendMenus() {
   $$('.send-dropdown-menu.show').forEach(m => m.classList.remove('show'));
 }
+// COMMENT: Menus previously stayed open until another Send button happened to
+// be clicked. Send buttons stopPropagation, so opening one doesn't trip this.
+document.addEventListener('click', () => closeAllSendMenus());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAllSendMenus(); });
 
 function el(tag, attrs = {}, children = []) {
   const e = document.createElement(tag);
@@ -35,19 +39,23 @@ function el(tag, attrs = {}, children = []) {
   return e;
 }
 
-function toast(msg, type = 'info') {
+function toast(msg, type = 'info', duration = 4000) {
   const c = document.getElementById('toast-container');
   if (!c) return;
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.textContent = msg;
   c.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.2s'; setTimeout(() => t.remove(), 200); }, 4000);
+  // COMMENT: Callers always passed a third duration arg that was ignored.
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.2s'; setTimeout(() => t.remove(), 200); }, duration);
 }
 
 function relativeTime(ts) {
   if (!ts) return 'never';
-  const d = Date.now() - new Date(ts).getTime();
+  const t = new Date(ts).getTime();
+  // COMMENT: Guard unparseable timestamps — used to render "Invalid Date".
+  if (isNaN(t)) return 'never';
+  const d = Date.now() - t;
   const s = Math.floor(d / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), days = Math.floor(h / 24);
   if (s < 60) return 'just now';
   if (m < 60) return `${m}m ago`;
@@ -94,8 +102,18 @@ async function handleRoute() {
   setActiveNav(hash);
 
   if (hash.startsWith('#/editor/')) {
-    const uuid = hash.split('/').slice(2).join('/');
-    await renderEditor(mainContent, decodeURIComponent(uuid), navigate);
+    const rawUuid = hash.split('/').slice(2).join('/');
+    let uuid;
+    try {
+      uuid = decodeURIComponent(rawUuid);
+    } catch {
+      // COMMENT: Malformed hash (e.g. #/editor/%ff) threw URIError and left
+      // the whole app on a blank screen with dead navigation.
+      toast('Invalid editor link.', 'error');
+      navigate('#/library');
+      return;
+    }
+    await renderEditor(mainContent, uuid, navigate);
   } else if (hash === '#/editor') {
     await renderEditor(mainContent, null, navigate);
   } else if (hash === '#/settings') {
@@ -146,8 +164,10 @@ async function renderLibrary(container, onNavigate) {
   const allPill = el('button', { className: 'category-pill active' }, ['All']);
   pillsContainer.appendChild(allPill);
 
-  const data = await chrome.storage.local.get({ categories: CATEGORIES });
-  const categories = data.categories || CATEGORIES;
+  // COMMENT: Categories come from CATEGORY_NAMES only. The old code read a
+  // `categories` storage key that nothing writes; a legacy install holding the
+  // old object shape there white-screened both Library and Editor.
+  const categories = CATEGORIES;
   let activeCategory = null;
 
   for (const cat of [...categories].sort()) {
@@ -261,7 +281,9 @@ async function renderLibrary(container, onNavigate) {
       copyBtn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(p.content);
-          await PromptStorage.updatePrompt(p.uuid, { useCount: (p.useCount || 0) + 1, lastUsedAt: new Date().toISOString() });
+          // COMMENT: Atomic bump — the old read-from-stale-card-snapshot write
+          // raced with the floating panel and dropped increments.
+          await PromptStorage.bumpUseCount(p.uuid);
           toast('Copied!', 'success', 1000);
         } catch { toast('Copy failed', 'error'); }
       });
@@ -390,10 +412,19 @@ async function renderLibrary(container, onNavigate) {
 
 // ─── Editor View ──────────────────────────────────────────────────────────
 
-let improveController = null;
+// COMMENT: Teardown ref only — the live controller is per-editor-session
+// (declared inside renderEditor). The old module-level controller was shared
+// across sessions: navigating away mid-stream then starting a new Improve let
+// the old stream's finally{} null the new session's controller, killing its
+// Stop button while the orphan kept writing into a detached textarea.
+let activeEditorAbort = null;
 
 async function renderEditor(container, promptUuid, onNavigate) {
+  // Abort any stream still running from the previous editor session.
+  if (activeEditorAbort) { activeEditorAbort.abort(); activeEditorAbort = null; }
   container.innerHTML = '';
+
+  let improveController = null;
 
   const wrapper = el('div', { className: 'editor-container' });
 
@@ -429,8 +460,8 @@ async function renderEditor(container, promptUuid, onNavigate) {
 
   // Meta row
   const metaRow = el('div', { className: 'editor-meta' });
-  const data = await chrome.storage.local.get({ categories: CATEGORIES });
-  const categories = data.categories || CATEGORIES;
+  // COMMENT: Same as Library — single-source categories, no dead storage key.
+  const categories = CATEGORIES;
   const catSelect = el('select', { className: 'editor-category-select' });
   catSelect.appendChild(el('option', { value: '' }, ['Uncategorized']));
   for (const c of [...categories].sort()) catSelect.appendChild(el('option', { value: c }, [c]));
@@ -452,7 +483,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
   tagInput.addEventListener('keydown', e => {
     if ((e.key === 'Enter' || e.key === ',') && tagInput.value.trim()) {
       e.preventDefault();
-      const t = tagInput.value.replace(',', '').trim().toLowerCase().replace(/\s+/g, '-');
+      // COMMENT: Strip ALL commas — only the first was removed, so pasting
+      // "a, b, c" created one tag containing commas.
+      const t = tagInput.value.replace(/,/g, '').trim().toLowerCase().replace(/\s+/g, '-');
       if (!currentTags.includes(t)) { currentTags.push(t); renderTags(); }
       tagInput.value = '';
     }
@@ -488,7 +521,15 @@ async function renderEditor(container, promptUuid, onNavigate) {
       if (p) {
         textarea.value = p.content || '';
         if (p.title) titleInput.value = p.title;
-        if (p.category) catSelect.value = p.category;
+        if (p.category) {
+          // COMMENT: Imported/synced data may carry a category that isn't in
+          // the current list; assigning a missing value silently fell back to
+          // "Uncategorized" and the next save wiped the stored category.
+          if (![...catSelect.options].some(o => o.value === p.category)) {
+            catSelect.appendChild(el('option', { value: p.category }, [p.category]));
+          }
+          catSelect.value = p.category;
+        }
         currentTags = [...(p.tags || [])];
         renderTags();
       } else {
@@ -625,6 +666,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     setAiStatus('Improving…');
     textarea.setAttribute('readonly', ''); textarea.style.opacity = '0.6';
     improveController = new AbortController();
+    activeEditorAbort = improveController;
 
     try {
       let buffer = '';
@@ -646,6 +688,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
       if (!e.message.includes('aborted')) toast('Improvement failed: ' + e.message, 'error');
       textarea.value = snapshot;
     } finally {
+      if (activeEditorAbort === improveController) activeEditorAbort = null;
       improveController = null; textarea.removeAttribute('readonly'); textarea.style.opacity = '1';
       improveBtn.disabled = false; improveBtn.textContent = 'Improve with AI'; stopBtn.style.display = 'none';
       clearAiStatus();
@@ -748,15 +791,35 @@ function showVersionModal(versions) {
       const row = document.createElement('div');
       row.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--color-border);display:flex;justify-content:space-between;align-items:center;';
       const info = document.createElement('div');
-      info.innerHTML = `<span>v${i + 1}</span> <span style="color:var(--color-text-secondary);font-size:12px;">${v.source} · ${relativeTime(v.createdAt)}</span>`;
+      // COMMENT: textContent, not innerHTML — v.source comes from storage
+      // (and with sync/import, potentially untrusted data).
+      const vLabel = document.createElement('span');
+      vLabel.textContent = `v${i + 1}`;
+      const vMeta = document.createElement('span');
+      vMeta.style.cssText = 'color:var(--color-text-secondary);font-size:12px;';
+      vMeta.textContent = `${v.source} · ${relativeTime(v.createdAt)}`;
+      info.append(vLabel, document.createTextNode(' '), vMeta);
       row.appendChild(info);
       const viewBtn = document.createElement('button');
       viewBtn.className = 'btn btn-sm btn-secondary'; viewBtn.textContent = 'View';
       viewBtn.addEventListener('click', () => {
+        // COMMENT: Built with DOM APIs — the old innerHTML version escaped
+        // only "<" and would have become XSS the moment it moved into an
+        // attribute context.
         const m = document.createElement('div');
         m.className = 'modal';
-        m.innerHTML = `<div class="modal-header"><h3>Version ${i + 1}</h3><button class="modal-close">×</button></div><div style="font-family:var(--font-mono);font-size:13px;white-space:pre-wrap;">${v.content.replace(/</g, '&lt;')}</div>`;
-        m.querySelector('.modal-close').addEventListener('click', () => m.remove());
+        const mHeader = document.createElement('div');
+        mHeader.className = 'modal-header';
+        mHeader.appendChild(document.createElement('h3')).textContent = `Version ${i + 1}`;
+        const mClose = document.createElement('button');
+        mClose.className = 'modal-close'; mClose.textContent = '×';
+        mClose.addEventListener('click', () => m.remove());
+        mHeader.appendChild(mClose);
+        m.appendChild(mHeader);
+        const pre = document.createElement('div');
+        pre.style.cssText = 'font-family:var(--font-mono);font-size:13px;white-space:pre-wrap;';
+        pre.textContent = v.content;
+        m.appendChild(pre);
         document.getElementById('modal-root').appendChild(m);
       });
       row.appendChild(viewBtn);
@@ -893,7 +956,20 @@ async function buildOllamaSettings() {
   const urlInput = el('input', { type: 'text', style: 'flex:1;' });
   urlInput.value = data.ollamaUrl;
   urlInput.addEventListener('change', async () => {
-    await chrome.storage.local.set({ ollamaUrl: urlInput.value });
+    const url = urlInput.value.trim();
+    await chrome.storage.local.set({ ollamaUrl: url });
+    // COMMENT: MV3 extension pages can only fetch hosts covered by
+    // host_permissions (localhost/127.0.0.1:11434, ollama.com). For any other
+    // origin, request permission now (user gesture) so the URL can work at
+    // all — previously custom LAN servers failed silently with no clue why.
+    try {
+      const u = new URL(url);
+      const builtIn = (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === 'ollama.com');
+      if (!builtIn) {
+        const granted = await chrome.permissions.request({ origins: [`${u.protocol}//${u.host}/*`] });
+        if (!granted) toast('Host permission not granted — this URL will fail to connect.', 'warning');
+      }
+    } catch { /* malformed URL — Test Connection will surface it */ }
   });
   urlRow.appendChild(urlInput);
   body.appendChild(urlRow);
@@ -937,7 +1013,10 @@ async function buildOllamaSettings() {
   const ctxInput = el('input', { type: 'number', min: '2048', max: '32768', style: 'width:100px;' });
   ctxInput.value = data.ollamaNumCtx;
   ctxInput.addEventListener('change', async () => {
-    const v = Math.max(2048, Math.min(32768, parseInt(ctxInput.value, 10)));
+    // COMMENT: parseInt('') is NaN, which Math.max/min propagate into storage
+    // (the input then rendered "NaN"). Fall back to the default instead.
+    const parsed = Number.parseInt(ctxInput.value, 10);
+    const v = Number.isNaN(parsed) ? DEFAULTS.numCtx : Math.max(2048, Math.min(32768, parsed));
     ctxInput.value = v;
     await chrome.storage.local.set({ ollamaNumCtx: v });
   });
@@ -999,7 +1078,9 @@ async function buildAIFeaturesSettings() {
   const vcInput = el('input', { type: 'number', min: '2', max: '5', style: 'width:60px;' });
   vcInput.value = data.variantCount;
   vcInput.addEventListener('change', async () => {
-    const v = Math.max(2, Math.min(5, parseInt(vcInput.value, 10)));
+    // COMMENT: Same NaN guard as the context-window input.
+    const parsed = Number.parseInt(vcInput.value, 10);
+    const v = Number.isNaN(parsed) ? DEFAULTS.variantCount : Math.max(2, Math.min(5, parsed));
     vcInput.value = v;
     await chrome.storage.local.set({ variantCount: v });
   });
@@ -1200,7 +1281,13 @@ async function buildDataSettings() {
   const deleteBtn = el('button', { className: 'btn btn-danger' }, ['Delete All Data']);
   deleteBtn.addEventListener('click', () => {
     const confirmation = prompt('Type DELETE to confirm:');
-    if (confirmation === 'DELETE') chrome.storage.local.clear(() => location.reload());
+    if (confirmation !== 'DELETE') return;
+    // COMMENT: Remove prompt data only. local.clear() also wiped
+    // aiProvidersMap (integrations UI then showed everything disabled while
+    // host permissions stayed granted), onboarding, theme, and — left alone —
+    // an enabled auto-backup would immediately rewrite the backup file with
+    // the now-empty library, destroying the user's sync/restore copy.
+    chrome.storage.local.remove(['prompts_storage', 'prompts', 'backup_settings'], () => location.reload());
   });
   body.appendChild(deleteBtn);
 
@@ -1209,16 +1296,6 @@ async function buildDataSettings() {
 
   const heading = sec.querySelector('h3');
   heading.parentNode.insertBefore(body, heading.nextSibling);
-  return sec;
-}
-
-function createSettingSection(title, builder) {
-  const sec = document.createElement('div');
-  sec.style.cssText = 'margin-bottom:24px;';
-  const heading = el('h3', {}, [title]);
-  heading.style.cssText = 'font-size:15px;font-weight:600;margin-bottom:12px;';
-  sec.appendChild(heading);
-  builder().then(el => sec.appendChild(el));
   return sec;
 }
 

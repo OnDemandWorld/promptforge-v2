@@ -235,6 +235,9 @@ window.getIconFilter = getIconFilter;
 const showEl = el => {
   // Respect intended display for our panel
   const isPromptList = el.classList && el.classList.contains('opm-prompt-list');
+  // COMMENT: Cancel any pending hide so a quick reopen isn't followed by the
+  // stale timer hiding the panel mid-interaction.
+  if (el._opmHideTimer) { clearTimeout(el._opmHideTimer); el._opmHideTimer = null; }
   el.style.display = isPromptList ? 'flex' : 'block';
   void el.offsetHeight;
   el.classList.add('opm-visible');
@@ -246,7 +249,10 @@ const showEl = el => {
  */
 const hideEl = el => {
   el.classList.remove('opm-visible');
-  setTimeout(() => {
+  if (el._opmHideTimer) clearTimeout(el._opmHideTimer);
+  el._opmHideTimer = setTimeout(() => {
+    el._opmHideTimer = null;
+    if (el.classList.contains('opm-visible')) return; // reopened while waiting
     el.style.display = 'none';
     const items = el.querySelector(`.${SELECTORS.PROMPT_ITEMS_CONTAINER}`);
     if (items) Array.from(items.children).forEach(i => i.style.display = 'flex');
@@ -620,7 +626,9 @@ if (typeof window.isDarkModeForced === 'undefined') window.isDarkModeForced = fa
 const isDarkMode = () => (window.isDarkModeForced ? true : isDarkModeActive);
 
 /* Listen to OS-level preference changes */
-if (window.matchMedia) {
+// COMMENT: Guarded — on re-injection this used to stack another change
+// listener per execution.
+if (window.matchMedia && !__PF_ALREADY_INITIALIZED) {
   const mql = window.matchMedia('(prefers-color-scheme: dark)');
   mql.addEventListener('change', e => {
     isDarkModeActive = e.matches;
@@ -653,15 +661,10 @@ class PromptStorageManager {
     // COMMENT: Dynamically import the web-accessible module so content-scripts can use it
     const mod = await import(chrome.runtime.getURL('promptStorage.js'));
 
-    // COMMENT: Build a thin adapter to keep current call-sites unchanged
-    this.__ps = {
-      getPrompts: mod.getPrompts,
-      setPrompts: mod.setPrompts,
-      savePrompt: mod.savePrompt,
-      updatePrompt: mod.updatePrompt,
-      deletePrompt: mod.deletePrompt,
-      importPrompts: mod.importPrompts
-    };
+    // COMMENT: Expose the module's full API. The previous allow-list adapter
+    // silently dropped addVersion/getVersions/restoreVersion/bumpUseCount,
+    // which broke version history and use-count tracking in the panel.
+    this.__ps = mod;
     return this.__ps;
   }
 
@@ -680,7 +683,7 @@ class PromptStorageManager {
       } catch {}
       // Auto-suggest metadata for first-time saves
       try {
-        await PromptUI.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
+        await PromptUIManager.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
       } catch {}
     }
     return result;
@@ -1452,27 +1455,31 @@ class PromptUIManager {
 
     // Add action buttons above the save button
     (async () => {
+      // COMMENT: Same missing-CSS-vars issue as the version modal — resolve
+      // button colors from the current mode.
+      const btnDark = isDarkMode();
+      const btnCss = `padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid ${btnDark ? '#4a5568' : '#ccc'};background:${btnDark ? '#2d3748' : '#fff'};color:${btnDark ? '#e2e8f0' : '#333'};`;
       const actionRow = createEl('div', { styles: { display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' } });
 
       // Version History button
       const vhBtn = createEl('button', { innerHTML: '📋 Versions', className: 'opm-button opm-standard' });
-      vhBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;background:var(--opm-bg,#fff);color:var(--opm-text,#333);';
-      vhBtn.addEventListener('click', () => PromptUI.showVersionHistory(prompt.uuid));
+      vhBtn.style.cssText = btnCss;
+      vhBtn.addEventListener('click', () => PromptUIManager.showVersionHistory(prompt.uuid));
       actionRow.appendChild(vhBtn);
 
       // Improve button
       const impBtn = createEl('button', { innerHTML: '✨ Improve', className: 'opm-button opm-standard' });
-      impBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;background:var(--opm-bg,#fff);color:var(--opm-text,#333);';
+      impBtn.style.cssText = btnCss;
       impBtn.addEventListener('click', async () => {
-        await PromptUI.improvePrompt(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
+        await PromptUIManager.improvePrompt(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
       });
       actionRow.appendChild(impBtn);
 
       // Variants button
       const varBtn = createEl('button', { innerHTML: '🔄 Variants', className: 'opm-button opm-standard' });
-      varBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;background:var(--opm-bg,#fff);color:var(--opm-text,#333);';
+      varBtn.style.cssText = btnCss;
       varBtn.addEventListener('click', async () => {
-        await PromptUI.generateVariants(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
+        await PromptUIManager.generateVariants(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
       });
       actionRow.appendChild(varBtn);
 
@@ -1525,21 +1532,33 @@ class PromptUIManager {
       const ps = await PromptStorageManager._ps();
       const versions = await ps.getVersions(promptUuid);
       if (!versions || versions.length === 0) { alert('No version history yet.'); return; }
+      // COMMENT: --opm-bg/--opm-text/--opm-border don't exist in the theme
+      // sheet (which defines --light-bg etc.), so the modal was permanently
+      // light-themed. Resolve colors directly from the current mode.
+      const dark = isDarkMode();
+      const themeBg = dark ? '#1a202c' : '#fff';
+      const themeText = dark ? '#e2e8f0' : '#333';
+      const themeBorder = dark ? '#4a5568' : '#e0e0e0';
       const overlay = createEl('div', { className: 'opm-modal-overlay' });
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100000;display:flex;align-items:center;justify-content:center;';
       const modal = createEl('div');
-      modal.style.cssText = 'background:var(--opm-bg,#fff);border-radius:12px;padding:20px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);';
+      modal.style.cssText = `background:${themeBg};color:${themeText};border:1px solid ${themeBorder};border-radius:12px;padding:20px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);`;
       const header = createEl('div', { styles: { display: 'flex', justifyContent: 'space-between', marginBottom: '16px' } });
       header.appendChild(createEl('h3', { styles: { margin: 0, fontSize: '16px' } }, ['Version History']));
       const closeBtn = createEl('button', { innerHTML: '×', className: 'opm-button-close' });
-      closeBtn.style.cssText = 'background:none;border:none;font-size:24px;cursor:pointer;color:var(--opm-text,#333);';
+      closeBtn.style.cssText = `background:none;border:none;font-size:24px;cursor:pointer;color:${themeText};`;
       closeBtn.addEventListener('click', () => overlay.remove());
       header.appendChild(closeBtn);
       modal.appendChild(header);
       for (let i = versions.length - 1; i >= 0; i--) {
         const v = versions[i];
-        const row = createEl('div', { styles: { padding: '8px 0', borderBottom: '1px solid var(--opm-border,#e0e0e0)' } });
-        row.appendChild(createEl('div', { innerHTML: `<b>v${i + 1}</b> <span style="color:#666;font-size:12px;">${v.source} · ${new Date(v.createdAt).toLocaleString()}</span>` }));
+        const row = createEl('div', { styles: { padding: '8px 0', borderBottom: `1px solid ${themeBorder}` } });
+        // COMMENT: Build with text nodes, not innerHTML — v.source comes from
+        // storage (and, with sync/import, potentially untrusted data).
+        const metaRow = createEl('div');
+        metaRow.appendChild(createEl('b', {}, [`v${i + 1}`]));
+        metaRow.appendChild(createEl('span', { styles: { color: '#666', fontSize: '12px' } }, [` ${v.source} · ${new Date(v.createdAt).toLocaleString()}`]));
+        row.appendChild(metaRow);
         const btns = createEl('div', { styles: { display: 'flex', gap: '4px', marginTop: '4px' } });
         const viewBtn = createEl('button', { innerHTML: 'View', className: 'opm-button opm-standard' });
         viewBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;';
@@ -1908,8 +1927,21 @@ const PromptMediator = (() => {
       variables: vars,
       onSubmit: async values => {
         const processed = state.processor.replaceVariables(prompt.content, values);
-        await InputBoxHandler.insertPrompt(inputBox, processed, qs(`#${SELECTORS.PROMPT_LIST}`));
+        // COMMENT: Re-acquire the input box at submit time — on SPA sites the
+        // node captured at mount can be replaced while the form is open, and
+        // inserting into a detached node was a silent no-op.
+        let target = await InputBoxHandler.getInputBox();
+        if (!target || !target.isConnected) {
+          target = (inputBox && inputBox.isConnected) ? inputBox : null;
+        }
         const activeList = qs(`#${SELECTORS.PROMPT_LIST}`);
+        if (!target) {
+          console.error('[PromptForge] Input box no longer available; falling back to clipboard.');
+          await copyToClipboardWithFeedback(processed);
+          if (activeList) PromptUIManager.hidePromptList(activeList);
+          return;
+        }
+        await InputBoxHandler.insertPrompt(target, processed, activeList);
         if (activeList) PromptUIManager.hidePromptList(activeList);
         setTimeout(() => {
           PromptStorageManager.getPrompts()
@@ -1928,7 +1960,9 @@ const PromptMediator = (() => {
 
   const setupMutationObserver = () => {
     if (state.mutationObserver) return;
-    const target = document.querySelector('main') || document.body;
+    // COMMENT: Observe documentElement, not <main> — SPAs replace <main>
+    // entirely, which silently killed an observer bound to the old node.
+    const target = document.documentElement || document.body;
     if (!target) return;
 
     const ensureUIVisible = debounce(async () => {
@@ -1989,9 +2023,12 @@ const PromptMediator = (() => {
   return { bootstrap };
 })();
 
-/* ===========================================================================
+/* ============================================================================
    External message handler — receives PROMPTFORGE_INSERT from full-page app
-   =========================================================================== */
+   COMMENT: Registration is guarded — on double-injection (onAdded/onUpdated
+   race) a second listener used to run every insert twice.
+   ============================================================================ */
+if (!__PF_ALREADY_INITIALIZED) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // COMMENT: Handle context menu prompt send — routes through variable processing
   if (message?.type === 'PROMPTFORGE_SEND_PROMPT') {
@@ -2044,7 +2081,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           variables: vars,
           onSubmit: async (values) => {
             const processed = PromptProcessor.replaceVariables(content, values);
-            await InputBoxHandler.insertPrompt(inputBox, processed, null);
+            // COMMENT: Re-acquire at submit time (see handlePromptSelect) —
+            // the mounted inputBox may be detached after SPA navigation.
+            let target = await InputBoxHandler.getInputBox();
+            if (!target || !target.isConnected) {
+              target = (inputBox && inputBox.isConnected) ? inputBox : null;
+            }
+            if (!target) {
+              await navigator.clipboard.writeText(processed);
+              trackUse();
+              return;
+            }
+            await InputBoxHandler.insertPrompt(target, processed, null);
             trackUse();
           }
         });
@@ -2100,6 +2148,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+} // end if (!__PF_ALREADY_INITIALIZED) — message handler registration
 
 /* Initialize the extension — skip if already initialized on this page */
 if (!__PF_ALREADY_INITIALIZED) {

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PromptForge",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "description": "Local AI-powered prompt manager with versioning and Ollama integration.",
     "permissions": [
         "storage",
@@ -51,7 +51,25 @@
                 "ai-operations.js"
             ],
             "matches": [
-                "<all_urls>"
+                "*://chatgpt.com/*",
+                "*://claude.ai/*",
+                "*://gemini.google.com/*",
+                "*://chat.deepseek.com/*",
+                "*://grok.com/*",
+                "*://copilot.microsoft.com/*",
+                "*://www.perplexity.ai/*",
+                "*://www.genspark.ai/*",
+                "*://poe.com/*",
+                "*://github.com/copilot/*",
+                "*://www.kimi.com/*",
+                "*://chat.mistral.ai/*",
+                "*://platform.openai.com/*",
+                "*://openrouter.ai/*",
+                "*://aistudio.google.com/*",
+                "*://lmarena.ai/*",
+                "*://chat.qwen.ai/*",
+                "*://notebooklm.google.com/*",
+                "*://apps.abacus.ai/chatllm/*"
             ]
         }
     ],

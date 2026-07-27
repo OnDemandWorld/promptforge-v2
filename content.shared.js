@@ -73,6 +73,26 @@
   window.TagService = TagService;
 
   const TagUI = (() => {
+    // COMMENT: One set of document/window listeners shared by every tag input,
+    // registered once per page. Previously each createTagInput() added three
+    // permanent listeners that were never removed — a leak on every form open,
+    // also retaining detached form DOM.
+    if (!window.__PF_TAG_UI_GLOBAL_LISTENERS) {
+      window.__PF_TAG_UI_GLOBAL_LISTENERS = true;
+      const repositionActive = () => {
+        const a = window.__pfActiveTagSuggestions;
+        if (a && a.suggestions.style.display !== 'none') a.position();
+      };
+      document.addEventListener('click', (evt) => {
+        const a = window.__pfActiveTagSuggestions;
+        if (a && a.suggestions.style.display !== 'none' && !a.suggestions.contains(evt.target)) {
+          a.suggestions.style.display = 'none';
+        }
+      });
+      window.addEventListener('resize', repositionActive);
+      window.addEventListener('scroll', repositionActive, true);
+    }
+
     const createTagInput = ({ initialTags = [] } = {}) => {
       const tagsSet = new Set(Array.isArray(initialTags) ? initialTags : []);
       const row = createEl('div', { className: `opm-tag-row opm-${getMode()}` });
@@ -84,7 +104,8 @@
       const renderPills = () => {
         pills.innerHTML = '';
         Array.from(tagsSet).forEach(tag => {
-          const pill = createEl('span', { className: `opm-tag-pill opm-${getMode()}`, innerHTML: String(tag) });
+          // COMMENT: text node, not innerHTML — tags come from storage/import and may contain markup
+          const pill = createEl('span', { className: `opm-tag-pill opm-${getMode()}` }, [String(tag)]);
           const removeBtn = createEl('button', { className: 'opm-tag-remove', innerHTML: '×' });
           removeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -131,7 +152,7 @@
         options = await TagService.getSuggestions({ term: input.value, exclude: tagsSet });
         suggestions.innerHTML = '';
         options.forEach((t, idx) => {
-          const item = createEl('div', { className: 'opm-tag-suggestion-item', innerHTML: t });
+          const item = createEl('div', { className: 'opm-tag-suggestion-item' }, [t]);
           if (idx === activeIndex) item.classList.add('active');
           item.addEventListener('mousedown', e => { e.preventDefault(); addTag(t); input.value = ''; suggestions.style.display = 'none'; });
           suggestions.appendChild(item);
@@ -159,9 +180,8 @@
       });
       input.addEventListener('focus', () => { suggestions.style.display = 'none'; });
       input.addEventListener('blur', () => { suggestions.style.display = 'none'; });
-      document.addEventListener('click', (evt) => { if (!suggestions.contains(evt.target)) suggestions.style.display = 'none'; });
-      window.addEventListener('resize', positionSuggestions);
-      window.addEventListener('scroll', positionSuggestions, true);
+      // COMMENT: Register this input with the shared global listeners above.
+      window.__pfActiveTagSuggestions = { suggestions, position: positionSuggestions };
 
       renderPills();
       row.append(pills, input);
@@ -887,7 +907,7 @@
                   dragFromIndex = null;
                 });
 
-                const label = createEl('span', { innerHTML: `${tag} (${n})` });
+                const label = createEl('span', {}, [`${tag} (${n})`]);
                 const removeBtn = createEl('button', { innerHTML: '×', styles: { marginLeft: '6px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '14px', lineHeight: '1' } });
                 removeBtn.addEventListener('click', async (e) => {
                   e.stopPropagation();
