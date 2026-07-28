@@ -26,6 +26,22 @@
     const fallbackIconFilter = 'invert(37%) sepia(74%) saturate(380%) hue-rotate(175deg) brightness(93%) contrast(88%)';
     const iconFilter = () => (typeof getIconFilterFn === 'function' ? getIconFilterFn() : fallbackIconFilter);
 
+    // COMMENT: B2 — search/filter data lives in this in-memory index keyed by
+    // uuid. Prompt titles/bodies/tags are never mirrored into DOM data-*
+    // attributes, where host-page JavaScript could scrape the whole library.
+    // Items in the page DOM carry only data-uuid; filtering (content.js)
+    // looks entries up here. Stale entries (deleted prompts) never match a
+    // live DOM item and are overwritten on the next render.
+    window.__PF_PROMPT_INDEX = window.__PF_PROMPT_INDEX || new Map();
+    const indexPromptForSearch = (prompt) => {
+      if (!prompt || !prompt.uuid) return;
+      window.__PF_PROMPT_INDEX.set(prompt.uuid, {
+        title: (prompt.title || '').toLowerCase(),
+        content: (prompt.content || '').toLowerCase(),
+        tags: Array.isArray(prompt.tags) ? prompt.tags.map(t => String(t).toLowerCase()) : []
+      });
+    };
+
     const ICON_SVGS = {
     list: `<img src="${chrome.runtime.getURL('icons/list.svg')}" width="16" height="16" alt="List Prompts" title="List Prompts" style="filter: ${iconFilter()}">`,
     add: `<img src="${chrome.runtime.getURL('icons/new.svg')}" width="16" height="16" alt="Add Prompt" title="Add Prompt" style="filter: ${iconFilter()}">`,
@@ -261,10 +277,9 @@
         const text = createEl('div', { styles: { flex: '1' } });
         text.textContent = prompt.title;
         item.appendChild(text);
-        item.dataset.title = prompt.title.toLowerCase();
-        item.dataset.content = prompt.content.toLowerCase();
-        item.dataset.tags = Array.isArray(prompt.tags) ? prompt.tags.map(t => String(t).toLowerCase()).join(' ') : '';
-        item.dataset.tagsList = JSON.stringify(Array.isArray(prompt.tags) ? prompt.tags.map(t => String(t).toLowerCase()) : []);
+        // COMMENT: B2 — uuid only; searchable fields go in the in-memory index.
+        item.dataset.uuid = prompt.uuid;
+        indexPromptForSearch(prompt);
         return item;
       },
       createEditablePromptItem(prompt, idx, reorder) {
@@ -286,10 +301,9 @@
           }
         });
         item.dataset.index = idx;
-        item.dataset.title = prompt.title.toLowerCase();
-        item.dataset.content = prompt.content.toLowerCase();
-        item.dataset.tags = Array.isArray(prompt.tags) ? prompt.tags.map(t => String(t).toLowerCase()).join(' ') : '';
-        item.dataset.tagsList = JSON.stringify(Array.isArray(prompt.tags) ? prompt.tags.map(t => String(t).toLowerCase()) : []);
+        // COMMENT: B2 — uuid only; searchable fields go in the in-memory index.
+        item.dataset.uuid = prompt.uuid;
+        indexPromptForSearch(prompt);
 
         const dragHandle = createEl('div', {
           className: 'opm-drag-handle opm-edit-only',
@@ -981,11 +995,10 @@
           const text = createEl('div', { styles: { flex: '0 0 auto' } });
           text.textContent = p.title;
           info.appendChild(text);
-          const lowerTags = Array.isArray(p.tags) ? p.tags.map(t => String(t).toLowerCase()).join(' ') : '';
-          item.dataset.title = p.title.toLowerCase();
-          item.dataset.content = p.content.toLowerCase();
-          item.dataset.tags = lowerTags;
-          item.dataset.tagsList = JSON.stringify(Array.isArray(p.tags) ? p.tags.map(t => String(t).toLowerCase()) : []);
+          // COMMENT: B2 — uuid + in-memory index (this view is dead code pending
+          // the C1 refactor, kept consistent so no data-* mirror exists anywhere).
+          item.dataset.uuid = p.uuid;
+          indexPromptForSearch(p);
           const actions = createEl('div', { styles: { display: 'flex', gap: '4px' } });
           const editIcon = Elements.createIconButton('edit', () => { window.PromptUIManager.showEditForm(p); });
           const deleteIcon = Elements.createIconButton('delete', () => { if (confirm(`Delete "${p.title}"?`)) window.PromptUIManager.deletePrompt(p.uuid); });

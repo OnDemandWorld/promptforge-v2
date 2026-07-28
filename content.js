@@ -20,6 +20,11 @@
    [16] Bootstrapping
    ============================================================================ */
 
+// COMMENT: C1 — content scripts ship as one bundle (content.bundle.js, built
+// from content.bundle.entry.js). AI operations are a static import now, so
+// ai-operations.js no longer needs to be web-accessible.
+import { improvePrompt as aiImprovePrompt, generateVariants as aiGenerateVariants, autoSuggestMetadata as aiAutoSuggestMetadata } from './ai-operations.js';
+
 /* COMMENT: Guard against double-injection from concurrent onAdded + onUpdated.
  * Content scripts are wrapped by Chrome; this flag prevents re-initialization. */
 const __PF_ALREADY_INITIALIZED = !!window.__OPM_PROMPT_MANAGER_INITIALIZED;
@@ -1023,17 +1028,19 @@ class PromptUIManager {
     // Combine with active tag filter if present
     const activeTag = (PromptUIManager.activeTagFilter || 'all').toLowerCase();
     Array.from(container.children).forEach(item => {
+      // COMMENT: B2 — searchable fields come from the in-memory index keyed by
+      // data-uuid, not from DOM attributes the host page could read.
+      const entry = window.__PF_PROMPT_INDEX?.get(item.dataset.uuid);
       const matchesSearch = value === ''
-        || item.dataset.title?.includes(value)
-        || item.dataset.content?.includes(value)
-        || item.dataset.tags?.includes(value);
-      // COMMENT: Use the exact tags list (JSON) for pill filtering to handle multi-word tags
+        || (entry && (
+          entry.title.includes(value)
+          || entry.content.includes(value)
+          || entry.tags.some(t => t.includes(value))
+        ));
+      // COMMENT: Exact tag match for pill filtering (multi-word tags safe)
       let matchesTag = true;
       if (activeTag !== 'all') {
-        try {
-          const tagList = JSON.parse(item.dataset.tagsList || '[]');
-          matchesTag = Array.isArray(tagList) && tagList.includes(activeTag);
-        } catch (_) { matchesTag = false; }
+        matchesTag = !!(entry && entry.tags.includes(activeTag));
       }
       item.style.display = (matchesSearch && matchesTag) ? 'flex' : 'none';
     });
@@ -1587,18 +1594,15 @@ class PromptUIManager {
   }
 
   static async improvePrompt(promptUuid, listEl) {
-    const { improvePrompt: fn } = await import(chrome.runtime.getURL('ai-operations.js'));
-    return fn(promptUuid, listEl);
+    return aiImprovePrompt(promptUuid, listEl);
   }
 
   static async generateVariants(promptUuid, listEl) {
-    const { generateVariants: fn } = await import(chrome.runtime.getURL('ai-operations.js'));
-    return fn(promptUuid, listEl);
+    return aiGenerateVariants(promptUuid, listEl);
   }
 
   static async autoSuggestMetadata(promptUuid, listEl) {
-    const { autoSuggestMetadata: fn } = await import(chrome.runtime.getURL('ai-operations.js'));
-    return fn(promptUuid, listEl);
+    return aiAutoSuggestMetadata(promptUuid, listEl);
   }
 
   static createSettingsForm() {

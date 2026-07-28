@@ -3,7 +3,7 @@
 
 import * as PromptStorage from './promptStorage.js';
 import { generateUUID } from './utils.js';
-import { improvePrompt, generateVariants, suggestAllMetadata, checkConnection, looksLikeResponseInsteadOfPrompt, CATEGORY_NAMES, DEFAULTS } from './ollama-service.js';
+import { improvePrompt, generateVariants, suggestAllMetadata, checkConnection, autoSelectModel, looksLikeResponseInsteadOfPrompt, CATEGORY_NAMES, DEFAULTS } from './ollama-service.js';
 import { getOpenAiSiteTabs, sendPromptToTab } from './integration-manager.js';
 import * as AutoBackup from './autoBackup.js';
 
@@ -853,7 +853,26 @@ async function renderSettings(container) {
   // ── Data Management ──
   wrapper.appendChild(await buildDataSettings());
 
+  // ── About footer (version + branding) ──
+  wrapper.appendChild(buildAboutFooter());
+
   container.appendChild(wrapper);
+}
+
+function buildAboutFooter() {
+  // COMMENT: Version comes from the manifest so it can never drift from the
+  // shipped release; no need to dig it out of chrome://extensions.
+  const version = chrome.runtime.getManifest().version;
+  const linkStyle = 'color:var(--color-primary);text-decoration:none;';
+  const footer = el('div', { style: 'margin-top:32px;padding-top:16px;border-top:1px solid var(--color-border);text-align:center;color:var(--color-text-secondary);font-size:12px;display:flex;flex-direction:column;gap:6px;align-items:center;' });
+  footer.appendChild(el('div', { style: 'font-weight:600;' }, [`PromptForge v${version}`]));
+  footer.appendChild(el('div', {}, [
+    'An ',
+    el('a', { href: 'https://odw.ai', target: '_blank', rel: 'noopener', style: linkStyle }, ['ODW']),
+    ' project · ',
+    el('a', { href: 'https://github.com/OnDemandWorld/promptforge-v2', target: '_blank', rel: 'noopener', style: linkStyle }, ['Source on GitHub']),
+  ]));
+  return footer;
 }
 
 async function buildGeneralSettings() {
@@ -992,6 +1011,14 @@ async function buildOllamaSettings() {
           const o = el('option', { value: m }, [m]);
           if (m === data.ollamaModel) o.selected = true;
           modelSel.appendChild(o);
+        }
+        // COMMENT: If the stored model no longer exists (or was never chosen
+        // — fresh install), fall back to the first available model and
+        // persist it so AI features target something that actually exists.
+        if (models.length > 0 && !models.includes(data.ollamaModel)) {
+          modelSel.value = models[0];
+          await chrome.storage.local.set({ ollamaModel: models[0] });
+          if (data.ollamaModel) toast(`Model "${data.ollamaModel}" not found — switched to ${models[0]}`, 'warning');
         }
       }
     }
@@ -1318,6 +1345,13 @@ handleRoute();
 // Ollama status
 async function updateOllamaStatus() {
   const result = await checkConnection();
+  // COMMENT: On a fresh install (or after a model was deleted) the stored
+  // model may not exist in Ollama — instead of pretending gemma4:latest is a
+  // working default, pick the first model from the live list and persist it.
+  if (result.connected && result.models?.length) {
+    const effective = await autoSelectModel(result.models);
+    if (effective && effective !== result.model) result.model = effective;
+  }
   const dot = document.querySelector('#ollama-status .status-dot');
   const text = document.getElementById('ollama-status-text');
   if (dot) dot.className = `status-dot ${result.connected ? 'connected' : 'disconnected'}`;

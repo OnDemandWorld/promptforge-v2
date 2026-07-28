@@ -25,18 +25,19 @@ Code runs in two completely different Chrome contexts. Mixing them up is the mos
 - `app.js` — full-page tab UI (library, editor, settings)
 - Library modules imported by the above: `promptStorage.js`, `ollama-service.js`, `integration-manager.js`, `autoBackup.js`, `utils.js`
 
-**2. Content-script context (dynamically injected into provider pages, communicates via window globals, NOT via ES module imports)**
+**2. Content-script context (bundled and injected into provider pages)**
 
-These files are injected by `service-worker.js` via `chrome.scripting.executeScript` in a specific order — **order matters** because later files depend on globals set by earlier ones:
+The content sources are bundled by esbuild into a single `content.bundle.js` (`npm run bundle`; `npm run build` = lint + bundle + release zip). The service worker injects **only that file**. The sources and their evaluation order (defined in `content.bundle.entry.js` — do not change casually):
 
 ```
-inputBoxHandler.js   → InputBoxHandler class (input detection per provider)
 content.styles.js    → THEME_COLORS, UI_STYLES, timing constants, injectGlobalStyles()
-content.shared.js    → TagService, TagUI, PromptUI (depends on content.styles.js globals)
-content.js           → Panel, PromptUIManager, PromptProcessor, PromptMediator, bootstrap
+inputBoxHandler.js   → InputBoxHandler class (input detection per provider)
+content.shared.js    → TagService, TagUI, PromptUI; exposes window.__initPromptShared
+content.js           → Panel, PromptUIManager, PromptProcessor, PromptMediator, bootstrap;
+                       calls __initPromptShared; statically imports ai-operations.js
 ```
 
-The globals are declared in `eslint.config.js` under `languageOptions.globals` — if you add a new cross-file symbol in a content script, it must be added there too or ESLint will flag it. `content.js` has an internal section map (`[01]`..`[16]`) at the top; follow that structure when editing it.
+The cross-file window-globals contract still exists *inside* these sources (dissolving it into real imports is a planned refactor): the globals are declared in `eslint.config.js` under `languageOptions.globals` — if you add a new cross-file symbol in a content script, add it there too or ESLint will flag it. `content.js` has an internal section map (`[01]`..`[16]`) at the top; follow that structure when editing it. **After editing any content source, re-run `npm run bundle`** — Chrome loads the generated `content.bundle.js`, not the sources.
 
 There is a double-injection guard (`window.__OPM_PROMPT_MANAGER_INITIALIZED` / `__PF_ALREADY_INITIALIZED`) because `onAdded` and `onUpdated` can race.
 
@@ -54,7 +55,7 @@ Content scripts are **write-only** with respect to the host page — they inject
 
 Two surfaces use Ollama differently:
 - **`app.js`** calls `ollama-service.js` directly via ES module imports (improve, variants, auto-suggest metadata).
-- **`ai-operations.js`** provides the same capabilities from the floating panel, but it's loaded as a web-accessible resource and dynamic-imports `ollama-service.js` via `chrome.runtime.getURL(...)`. It depends on content-script globals (`createEl`, `PromptStorageManager`, `PromptUIManager`, etc.) — see the header comment for the full list.
+- **`ai-operations.js`** provides the same capabilities from the floating panel. It is bundled into `content.bundle.js` (statically imported by `content.js`) and never touches Ollama directly: every call goes over a `chrome.runtime.connect` port (`pf-ai`) to the service worker, which runs `ollama-service.js` with its host permissions. `ollama-service.js` is not web-accessible — no page-context code can import it. It still depends on content-script globals (`createEl`, `PromptStorageManager`, `PromptUIManager`) — see the header comment.
 
 ## Storage shape
 

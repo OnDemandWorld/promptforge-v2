@@ -5,8 +5,11 @@
 //
 // Default model: gemma4:latest
 
-// Single source of truth for Ollama defaults. Import from app.js / cors-rules.js
-// instead of re-declaring the same literals.
+// Single source of truth for Ollama defaults. Import from app.js /
+// service-worker.js instead of re-declaring the same literals.
+// NOTE: DEFAULTS.model is a last-resort fallback only (e.g. Ollama
+// unreachable). Whenever a connection exists, autoSelectModel() ensures the
+// stored model is one that actually exists in the user's Ollama.
 export const DEFAULTS = Object.freeze({
   url: 'http://localhost:11434',
   model: 'gemma4:latest',
@@ -351,6 +354,40 @@ export function looksLikeResponseInsteadOfPrompt(text) {
 // ---------------------------
 // Public API
 // ---------------------------
+
+/**
+ * Ensure a usable model is selected. If the stored model is unset or absent
+ * from Ollama's live model list, pick the first available model and persist
+ * it. COMMENT: fixes the fresh-install problem where gemma4:latest was shown
+ * as the "default" even when it was never pulled. No-op (returns the stored
+ * model) when Ollama is unreachable or the stored model is valid.
+ * @param {string[]|null} availableModels - pass checkConnection()'s models to
+ *   avoid a second /api/tags fetch.
+ * @returns {Promise<string>} the effective model name.
+ */
+export async function autoSelectModel(availableModels = null) {
+  const settings = await getOllamaSettings();
+  const stored = settings.ollamaModel || DEFAULT_MODEL;
+  let models = availableModels;
+  if (!models) {
+    try {
+      const baseUrl = settings.ollamaUrl || DEFAULTS.url;
+      const headers = { ...(settings.ollamaBearerToken ? { Authorization: `Bearer ${settings.ollamaBearerToken}` } : {}) };
+      const res = await fetch(`${baseUrl}/api/tags`, {
+        signal: AbortSignal.timeout(5000),
+        ...(Object.keys(headers).length > 0 ? { headers } : {})
+      });
+      if (!res.ok) return stored;
+      const data = await res.json();
+      models = data.models?.map(m => m.name) || [];
+    } catch { return stored; }
+  }
+  if (!Array.isArray(models) || models.length === 0) return stored;
+  if (stored && models.includes(stored)) return stored;
+  const pick = models[0];
+  try { await chrome.storage.local.set({ ollamaModel: pick }); } catch { /* report pick anyway */ }
+  return pick;
+}
 
 export async function checkConnection() {
   // COMMENT: Hoist settings out of try so the stored model is always reported,

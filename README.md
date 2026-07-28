@@ -12,7 +12,8 @@ Write, organize, version, and reuse AI prompts on every LLM provider site. All d
 # Option A: Local Ollama
 ollama pull gemma4:latest
 ollama serve
-# No OLLAMA_ORIGINS needed — the extension rewrites the Origin header itself.
+# No OLLAMA_ORIGINS needed — AI calls are proxied through the extension's
+# service worker, which is an authorized origin.
 
 # Option B: Cloud (ollama.com) — no install needed
 #   1. Create free account at ollama.com
@@ -72,9 +73,8 @@ promptforge-v2/
 │
 ├── promptStorage.js           # chrome.storage.local, v3 schema, version history
 ├── ollama-service.js          # Ollama REST client (local + cloud with bearer token)
-├── cors-rules.js             # declarativeNetRequest rule: rewrites Origin for Ollama
 ├── integration-manager.js     # Provider list (derived from llm_providers.json)
-├── ai-operations.js           # Improve, variants, auto-suggest (extracted from content.js)
+├── ai-operations.js           # Improve, variants, auto-suggest (proxied via service worker)
 ├── llm_providers.json         # 19 provider definitions (pattern, selector, icon)
 ├── utils.js                   # UUID generator (crypto.randomUUID)
 │
@@ -147,7 +147,7 @@ Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 | Issue | Solution |
 |---|---|
-| Ollama connection fails (403) | No `OLLAMA_ORIGINS` env var needed — the extension rewrites the `Origin` header to `http://localhost` via `declarativeNetRequest`. If it still fails: confirm Ollama is running at the configured URL, and (cloud) check the API key |
+| Ollama connection fails (403) | No `OLLAMA_ORIGINS` env var needed — AI calls run through the extension's service worker (authorized via host permissions). If it still fails: confirm Ollama is running at the configured URL, and (cloud) check the API key |
 | Prompt won't inject into site | 1) Enable integration in Settings, 2) Refresh the site, 3) Click into input first |
 | Floating panel not appearing | Check provider integration is enabled; reload the page |
 | Variables not processing | Use `#variable_name#` syntax (letters, numbers, underscores only) |

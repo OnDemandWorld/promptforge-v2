@@ -1,7 +1,6 @@
 import { getProviders } from './integration-manager.js';
 import { getPrompts, onPromptsChanged, savePrompt, bumpUseCount } from './promptStorage.js';
-import { checkConnection } from './ollama-service.js';
-import { syncOllamaCorsRules } from './cors-rules.js';
+import { checkConnection, improvePrompt, generateVariants, suggestAllMetadata } from './ollama-service.js';
 
 // ---------------------------
 // Install / Update / Startup
@@ -16,20 +15,11 @@ chrome.runtime.onInstalled.addListener(function (details) {
     rebuildProviderMap();
   }
   createPromptContextMenu();
-  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   createPromptContextMenu();
   rebuildProviderMap();
-  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
-});
-
-// Keep the Origin-rewrite rule in sync with the configured Ollama URL.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.ollamaUrl) {
-    syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
-  }
 });
 
 async function rebuildProviderMap() {
@@ -59,9 +49,11 @@ chrome.permissions.onAdded.addListener(async (permissions) => {
             if (alreadyInjected) continue;
           } catch (_) { /* tab not accessible, skip guard check */ }
 
+          // COMMENT: C1 — one bundled file; injection order is no longer a
+          // constraint (evaluation order lives in content.bundle.entry.js).
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            files: ['inputBoxHandler.js', 'content.styles.js', 'content.shared.js', 'content.js']
+            files: ['content.bundle.js']
           });
         }
       } catch (err) {
@@ -104,7 +96,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             } catch { /* tab not accessible yet, fall through to inject */ }
             await chrome.scripting.executeScript({
               target: { tabId },
-              files: ['inputBoxHandler.js', 'content.styles.js', 'content.shared.js', 'content.js']
+              files: ['content.bundle.js']
             });
           } catch (e) {
             // Ignore common transient/injection errors
@@ -283,6 +275,71 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
     }
   }
+});
+
+// ---------------------------
+// Ollama proxy (port RPC)
+// ---------------------------
+// COMMENT: B1 — every Ollama call from the floating panel now runs here, in
+// the service worker, where host_permissions authorize the fetch. Previously
+// the panel fetched Ollama from page context and a declarativeNetRequest rule
+// rewrote the Origin header — but that rule applied to ALL requests initiated
+// by the provider origin, so any script on a provider page (including a
+// compromised one) could reach the user's local Ollama. The rule is gone;
+// page-context code talks to Ollama only through this port.
+//
+// Protocol (port name 'pf-ai'):
+//   client -> { id, op: 'improve'|'variants'|'suggest'|'check', ... }
+//   client -> { id, cancel: true }                      (abort op `id`)
+//   worker -> { id, chunk }*  then { id, done: true }   (streaming: improve)
+//   worker -> { id, result }                            (unary ops)
+//   worker -> { id, error: message }                    (failure)
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'pf-ai') return;
+  const controllers = new Map(); // request id -> AbortController
+
+  port.onDisconnect.addListener(() => {
+    controllers.forEach(c => c.abort());
+    controllers.clear();
+  });
+
+  port.onMessage.addListener(async (msg) => {
+    const { id, op } = msg || {};
+    if (msg && msg.cancel) {
+      const c = controllers.get(id);
+      if (c) c.abort();
+      controllers.delete(id);
+      return;
+    }
+    if (id === undefined || !op) return;
+
+    const controller = new AbortController();
+    controllers.set(id, controller);
+    const signal = controller.signal;
+    try {
+      if (op === 'improve') {
+        const gen = await improvePrompt(msg.promptText, { signal });
+        for await (const chunk of gen) {
+          port.postMessage({ id, chunk });
+        }
+        port.postMessage({ id, done: true });
+      } else if (op === 'variants') {
+        const variants = await generateVariants(msg.promptText, msg.count, { signal });
+        port.postMessage({ id, result: variants });
+      } else if (op === 'suggest') {
+        const metadata = await suggestAllMetadata(msg.promptText);
+        port.postMessage({ id, result: metadata });
+      } else if (op === 'check') {
+        port.postMessage({ id, result: await checkConnection() });
+      } else {
+        port.postMessage({ id, error: `Unknown Ollama op: ${op}` });
+      }
+    } catch (e) {
+      try { port.postMessage({ id, error: e.message || String(e) }); } catch { /* port already gone */ }
+    } finally {
+      controllers.delete(id);
+    }
+  });
 });
 
 // ---------------------------

@@ -5,6 +5,31 @@
 
 ---
 
+## Progress log
+
+| Date | Milestone | Status |
+|------|-----------|--------|
+| 2026-07-27 | **v2.1.1** — audit + 40+ fixes (Part A), committed & tagged locally (not pushed) | ✅ Done |
+| 2026-07-27 | **B1** — Ollama proxied through service worker (`pf-ai` port RPC); `cors-rules.js` deleted, `declarativeNetRequest` permission dropped, `ollama-service.js` no longer web-accessible | ✅ Done (browser-untested) |
+| 2026-07-27 | **B2** — prompt bodies removed from host-page DOM; search/filter via in-memory `__PF_PROMPT_INDEX` keyed by `data-uuid` | ✅ Done (browser-untested) |
+| 2026-07-27 | **C1** — content scripts bundled by esbuild → single `content.bundle.js` injection (order contract moved into `content.bundle.entry.js`); `ai-operations.js` dropped from WAR | ✅ Done (browser-untested) |
+| 2026-07-27 | **C5** — `npm run bundle` / `npm run build` (lint + bundle + reproducible zip via `scripts/package.sh`) | ✅ Done |
+| — | v2.2 browser verification + commit/tag | ⏳ Needs your test pass |
+| — | B4 alerts→toasts, B6 dead code, B7 context-safe storage split, C2 app.js decomposition, C3 shared modules, C4 category IDs, B5 cross-context locking | Pending |
+| — | **D** — multilingual (en/zh-HK/zh-CN) | Pending |
+| — | **E** — folder sync | Pending |
+
+**Decisions locked:** planned sequence; CORS proxy via SW; zh variant = auto-detect with ask-if-unsure (ambiguous default: first Chinese variant in the user's active set).
+
+**Browser test checklist for v2.2 work** (lint-only verified so far):
+1. Provider page → panel: Improve (streaming + Stop actually stops), Variants, Versions button, auto-suggest on new prompt save.
+2. Panel search + tag-pill filtering still filter correctly (B2).
+3. App tab editor: Improve/Variants/Version History (unchanged path, sanity).
+4. Popup copy → backup trigger still works (scheduleBackup).
+5. Fresh install: single `content.bundle.js` injection, no double panel.
+
+---
+
 ## Executive summary
 
 The v2.1.0 codebase is structurally sound — storage is centralized, the provider list is data-driven, and the privacy contract (content scripts never read page content) is intact. But the audit found **~70 issues**, and three of them were **critical functional breaks in the shipped product**:

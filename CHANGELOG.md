@@ -4,6 +4,42 @@ All notable changes to PromptForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-07-28
+
+### Highlights
+
+- **Ollama calls from the floating panel now run through the service worker** — no more `declarativeNetRequest` Origin rewriting (which also covered requests initiated by provider-page scripts).
+- **Prompt content no longer exposed in host-page DOM** — search/filter moved to an in-memory index.
+- **Content scripts ship as one bundle** — single injection, no file-order races.
+- **Fresh installs pick a real model** from your Ollama instead of assuming `gemma4:latest`.
+- **Version + project footer** on the Settings page.
+
+### Added
+
+- **Service-worker Ollama proxy** (`pf-ai` runtime port): streaming `improve`, unary `variants`/`suggest`/`check`, per-request abort (Stop truly cancels the server-side request), abort-all on disconnect. `ollama-service.js` is no longer web-accessible — page-context code cannot import it.
+- **`autoSelectModel()`** (`ollama-service.js`): when connected, if the stored model is unset or absent from Ollama's live model list, the first available model is selected and persisted — on app load and in the Settings model dropdown (with a toast when an existing selection was invalid).
+- **Settings → About footer**: version from `chrome.runtime.getManifest()`, ODW branding (odw.ai), GitHub source link.
+- **Build tooling**: `npm run bundle` (esbuild) and `npm run build` (lint → bundle → reproducible release zip via `scripts/package.sh`).
+
+### Changed
+
+- **Content scripts bundled**: `content.bundle.entry.js` → `content.bundle.js` (esbuild IIFE); the service worker injects only that file. `ai-operations.js` is statically imported (no longer web-accessible). Evaluation order is documented in the entry file and CLAUDE.md. Editing content sources now requires `npm run bundle` before reloading.
+- **Panel search/tag filtering** reads `window.__PF_PROMPT_INDEX` (in-memory, keyed by `data-uuid`) instead of `data-title`/`data-content`/`data-tags`/`data-tagsList` attributes — host-page JavaScript can no longer scrape the prompt library off DOM attributes. Tag search is now per-tag (no cross-tag-boundary substring matches).
+- `web_accessible_resources` reduced to `icons/*`, `icon-nocircle.svg`, `info.html`, `promptStorage.js`, `utils.js`, `llm_providers.json`, scoped to the 19 provider origins.
+- README: Origin-rewrite messaging replaced with the service-worker-proxy description; architecture and troubleshooting updated.
+
+### Removed
+
+- `cors-rules.js` and the `declarativeNetRequest` permission (replaced by the service-worker proxy; no `OLLAMA_ORIGINS` env var needed, same as before).
+- `ai-operations.js` and `ollama-service.js` from `web_accessible_resources`.
+- Raw content-script sources from the release zip (runtime loads the bundle only).
+
+### Migration / Upgrade notes
+
+- Reload the unpacked extension after updating. The removed permission clears silently.
+- Custom Ollama URLs (LAN servers): re-save the URL once in Settings so the host-permission request fires — the proxy uses the same granted permissions.
+- `dist/promptforge-v2/` (hand-assembled 2.1.0-era copy) is obsolete; use `npm run build` output.
+
 ## [2.1.1] - 2026-07-27
 
 ### Highlights

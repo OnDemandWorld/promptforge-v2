@@ -69,6 +69,8 @@ export default [
     },
   },
   {
-    ignores: ['tests/**', '*.test.js'],
+    // COMMENT: content.bundle.js is generated (npm run bundle); dist/ and
+    // scripts/ are build artifacts/tooling.
+    ignores: ['tests/**', '*.test.js', 'content.bundle.js', 'dist/**', 'scripts/**'],
   },
 ];

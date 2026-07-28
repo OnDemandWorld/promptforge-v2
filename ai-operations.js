@@ -1,10 +1,98 @@
 /* ai-operations.js
- * COMMENT: Extracted AI-related methods from content.js PromptUIManager
- * to reduce file size and improve maintainability.
+ * COMMENT: AI operations for the floating panel (improve / variants /
+ * auto-suggest metadata).
  *
- * These methods depend on globals injected by content.js:
- *   createEl, qs, SELECTORS, PromptStorageManager, PromptUIManager
+ * B1: all Ollama traffic is proxied through the service worker over a
+ * runtime port ('pf-ai'). This file no longer fetches Ollama from page
+ * context — that required the declarativeNetRequest Origin-rewrite rule,
+ * which also covered requests initiated by the provider page's own scripts.
+ * The rule is gone; the SW authorizes fetches via host_permissions instead.
+ *
+ * Depends on content-script globals: createEl, PromptStorageManager,
+ * PromptUIManager.
  */
+
+/* --------------------------------------------------------------------------
+   Port RPC to the service worker
+   -------------------------------------------------------------------------- */
+let _aiPort = null;
+let _aiReqId = 0;
+
+function aiPort() {
+  // COMMENT: Reconnect lazily — the SW can terminate; a dead port throws on
+  // postMessage and the next call rebuilds it.
+  if (!_aiPort) {
+    _aiPort = chrome.runtime.connect({ name: 'pf-ai' });
+    _aiPort.onDisconnect.addListener(() => { _aiPort = null; });
+  }
+  return _aiPort;
+}
+
+/** Unary RPC: resolves with msg.result, rejects with msg.error. */
+function ollamaRPC(message) {
+  return new Promise((resolve, reject) => {
+    const port = aiPort();
+    const id = ++_aiReqId;
+    const onMessage = (msg) => {
+      if (!msg || msg.id !== id) return;
+      if (msg.error !== undefined) {
+        port.onMessage.removeListener(onMessage);
+        reject(new Error(msg.error));
+      } else if ('result' in msg) {
+        port.onMessage.removeListener(onMessage);
+        resolve(msg.result);
+      }
+    };
+    port.onMessage.addListener(onMessage);
+    port.postMessage({ id, ...message });
+  });
+}
+
+/**
+ * Streaming RPC: returns an async generator of chunks with a `.cancel()`
+ * method that aborts the worker-side request.
+ */
+function ollamaStream(message) {
+  const port = aiPort();
+  const id = ++_aiReqId;
+  const queue = [];
+  let resolveNext = null;
+  let done = false;
+  let error = null;
+
+  const onMessage = (msg) => {
+    if (!msg || msg.id !== id) return;
+    if (msg.error !== undefined) error = new Error(msg.error);
+    else if (msg.chunk !== undefined) queue.push(msg.chunk);
+    if (msg.done || msg.error !== undefined) done = true;
+    if (resolveNext) { const r = resolveNext; resolveNext = null; r(); }
+  };
+  port.onMessage.addListener(onMessage);
+  port.postMessage({ id, ...message });
+
+  const gen = (async function* () {
+    try {
+      while (true) {
+        if (queue.length > 0) { yield queue.shift(); continue; }
+        if (done) { if (error) throw error; return; }
+        await new Promise(r => { resolveNext = r; });
+      }
+    } finally {
+      port.onMessage.removeListener(onMessage);
+    }
+  })();
+  gen.cancel = () => {
+    try { port.postMessage({ id, cancel: true }); } catch { /* port gone */ }
+  };
+  return gen;
+}
+
+// COMMENT: Local copy of ollama-service's sanity check — the page no longer
+// imports that module. Detects when the model produced a response instead of
+// a rewritten prompt.
+function looksLikeResponseInsteadOfPrompt(text) {
+  return /^(I |I'll |I can |I cannot |I'm |I am |As an AI|Sure,|Here's|Okay,|Great question)/i.test(text.trim());
+}
 
 /* --------------------------------------------------------------------------
    Inline toast helper — avoids alert() blocking dialogs
@@ -17,14 +105,17 @@ function _toast(msg, type = 'info', duration = 2500) {
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 200); }, duration);
 }
 
+/* --------------------------------------------------------------------------
+   Operations
+   -------------------------------------------------------------------------- */
+
 /**
- * COMMENT: Improve a prompt via Ollama and update it in place.
+ * COMMENT: Improve a prompt via Ollama (SW-proxied) and update it in place.
  * @param {string} promptUuid
  * @param {HTMLElement|null} listEl
  */
 export async function improvePrompt(promptUuid, listEl) {
   try {
-    const { improvePrompt: ollamaImprove, looksLikeResponseInsteadOfPrompt } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
     const prompt = prompts.find(p => p.uuid === promptUuid);
     if (!prompt) return;
@@ -36,17 +127,28 @@ export async function improvePrompt(promptUuid, listEl) {
     // Show improving state
     const statusDiv = createEl('div', { className: 'opm-improving-status' });
     statusDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;display:flex;align-items:center;gap:8px;';
-    statusDiv.innerHTML = '<span>Improving…</span><button style="background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;">Stop</button>';
-    statusDiv.querySelector('button').addEventListener('click', () => { improving = false; statusDiv.remove(); });
+    const statusLabel = createEl('span', {}, ['Improving…']);
+    const stopButton = createEl('button');
+    stopButton.style.cssText = 'background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;';
+    stopButton.textContent = 'Stop';
+    statusDiv.append(statusLabel, stopButton);
+
+    const stream = ollamaStream({ op: 'improve', promptText: original });
+    stopButton.addEventListener('click', () => {
+      improving = false;
+      stream.cancel(); // COMMENT: aborts the SW-side request (old code left it running)
+      statusDiv.remove();
+    });
     document.body.appendChild(statusDiv);
 
-    const gen = await ollamaImprove(original);
-    for await (const chunk of gen) {
-      if (!improving) break;
-      buffer += chunk;
+    try {
+      for await (const chunk of stream) {
+        if (!improving) break;
+        buffer += chunk;
+      }
+    } finally {
+      statusDiv.remove();
     }
-
-    statusDiv.remove();
     if (!improving || !buffer.trim()) return;
 
     buffer = buffer.replace(/^(?:here|sure|okay|the improved|improved|below)[^\n]*\n?/i, '').trim();
@@ -62,17 +164,22 @@ export async function improvePrompt(promptUuid, listEl) {
       if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
       _toast('Prompt improved!', 'success');
     }
-  } catch (e) { console.error('Improve failed:', e); _toast('Improvement failed: ' + e.message, 'error'); }
+  } catch (e) {
+    if (!/abort/i.test(e.message || '')) {
+      console.error('Improve failed:', e);
+      _toast('Improvement failed: ' + e.message, 'error');
+    }
+  }
 }
 
 /**
- * COMMENT: Generate prompt variants via Ollama and store as version history.
+ * COMMENT: Generate prompt variants via Ollama (SW-proxied) and store as
+ * version history.
  * @param {string} promptUuid
  * @param {HTMLElement|null} listEl
  */
 export async function generateVariants(promptUuid, listEl) {
   try {
-    const { generateVariants: ollamaVariants } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
     const prompt = prompts.find(p => p.uuid === promptUuid);
     if (!prompt) return;
@@ -82,8 +189,12 @@ export async function generateVariants(promptUuid, listEl) {
     statusDiv.textContent = 'Generating variants…';
     document.body.appendChild(statusDiv);
 
-    const variants = await ollamaVariants(prompt.content, 3);
-    statusDiv.remove();
+    let variants = [];
+    try {
+      variants = await ollamaRPC({ op: 'variants', promptText: prompt.content, count: 3 });
+    } finally {
+      statusDiv.remove();
+    }
 
     if (variants && variants.length > 0) {
       const g = 'variant-group-' + Date.now();
@@ -103,7 +214,6 @@ export async function generateVariants(promptUuid, listEl) {
  */
 export async function autoSuggestMetadata(promptUuid, listEl) {
   try {
-    const { suggestAllMetadata } = await import(chrome.runtime.getURL('ollama-service.js'));
     const prompts = await PromptStorageManager.getPrompts();
     const prompt = prompts.find(p => p.uuid === promptUuid);
     if (!prompt) return;
@@ -111,12 +221,10 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
     const data = await chrome.storage.local.get({ autoSuggestMetadata: true });
     if (!data.autoSuggestMetadata) return;
 
-    const metadata = await suggestAllMetadata(prompt.content);
+    const metadata = await ollamaRPC({ op: 'suggest', promptText: prompt.content });
     const updates = {};
     // COMMENT: Only fill fields the user left empty — never overwrite a
-    // user-provided title/tags/category. (The old gate returned early whenever
-    // a title existed, and the create form requires one, so this feature could
-    // never run.)
+    // user-provided title/tags/category.
     if ((!prompt.title || prompt.title === 'Untitled Prompt') && metadata.title && metadata.title !== 'Untitled Prompt') {
       updates.title = metadata.title;
     }
@@ -124,7 +232,7 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
       updates.category = metadata.category;
     }
     if (!Array.isArray(prompt.tags) || prompt.tags.length === 0) {
-      const filteredTags = metadata.tags.filter(t => t !== 'untagged');
+      const filteredTags = (metadata.tags || []).filter(t => t !== 'untagged');
       if (filteredTags.length > 0) updates.tags = filteredTags;
     }
 
@@ -136,6 +244,6 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
   } catch (e) { console.warn('Auto-suggest failed:', e); }
 }
 
-// COMMENT: Kept for backwards compatibility — content.js now imports the
-// named ES exports above via dynamic import().
+// COMMENT: Kept for backwards compatibility — content.js imports the named
+// ES exports above via dynamic import().
 window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata };
