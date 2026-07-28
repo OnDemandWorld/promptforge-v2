@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PromptForge",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "description": "Local AI-powered prompt manager with versioning and Ollama integration.",
     "permissions": [
         "storage",
@@ -57,7 +57,7 @@
                 "*://www.perplexity.ai/*",
                 "*://www.genspark.ai/*",
                 "*://poe.com/*",
-                "*://github.com/copilot/*",
+                "*://github.com/*",
                 "*://www.kimi.com/*",
                 "*://chat.mistral.ai/*",
                 "*://platform.openai.com/*",
@@ -66,7 +66,7 @@
                 "*://lmarena.ai/*",
                 "*://chat.qwen.ai/*",
                 "*://notebooklm.google.com/*",
-                "*://apps.abacus.ai/chatllm/*"
+                "*://apps.abacus.ai/*"
             ]
         }
     ],

@@ -4,6 +4,12 @@ All notable changes to PromptForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.2.1] - 2026-07-28
+
+### Fixed
+
+- **Extension failed to load: "Invalid value for 'web_accessible_resources[0]'. Invalid match pattern."** Chrome rejects match patterns containing paths in `web_accessible_resources.matches` (unlike content-script matches), so `*://github.com/copilot/*` and `*://apps.abacus.ai/chatllm/*` made the manifest unloadable. Both are now origin-only (`*://github.com/*`, `*://apps.abacus.ai/*`); the provider list in `llm_providers.json` keeps the path-scoped patterns for injection targeting.
+
 ## [2.2.0] - 2026-07-28
 
 ### Highlights
