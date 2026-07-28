@@ -163,3 +163,40 @@ Priority key: **P0** = blocking next action; **P1** = next feature phase; **P2/P
 ---
 
 *End of report. All claims verifiable via: `git show 68dea54` (v2.1.1), `git status`/`git diff` (v2.2 uncommitted), `npm run lint`, `V3_PLAN.md`, `CHANGELOG.md [2.1.1]`, and `content.bundle.js` symbol positions.*
+
+---
+
+## Addendum — v3 build session (2026-07-28)
+
+Subsequent to this report, the full v3 feature set was implemented in one session. Status as of writing: **all lint-clean (0 errors), merge engine unit-verified, everything else browser-unverified, uncommitted**.
+
+### Completed since v2.2.1
+
+- **D-II — AI language adaptation.** `ollama-service.js` system prompts converted to factories (`makeImproveSystemPrompt(language)`, `makeVariantsSystemPrompt(count, language)`, `makeTitleSystemPrompt`, `makeTagsSystemPrompt`) appending a `languageDirective()` (preserve code/`#variables#`/proper nouns). `language` threaded through: app editor (`currentLanguage()` from selector or detection), service-worker `pf-ai` port messages, `ai-operations.js` panel ops. `suggestTags` fallback filter is now Unicode-aware (`/^[\p{L}\p{N}_-]+$/u`) — CJK tags survive. Settings → Languages section (active-set checkboxes with min-one guard, default-language preference honored by the editor).
+- **D-III — i18n infrastructure + C4.** `categories.js`: canonical ids (`writing`…`other`), `canonicalCategoryId()` accepts ids or legacy names; `promptStorage` normalises `categoryId` from either; app library/editor operate on ids, display via catalogs. `i18n.js`: `t(key, subs, fallback)` over `chrome.i18n.getMessage` (English fallback = incremental-safe extraction), `relativeTimeLocalized()` via `Intl.RelativeTimeFormat` ("3天前"). `i18n-html.js`: external hydration script (MV3 CSP-safe) for `[data-i18n]` / `[data-i18n-ph]` / `[data-i18n-title]`, included in app.html + popup.html. Manifest: `default_locale: "en"`, name/description/command via `__MSG_*__`.
+- **D-IV — translations.** `_locales/{en,zh_HK,zh_CN}/messages.json` — **194 keys each, full key parity, validated JSON**. Coverage: nav, library, editor, all toasts, settings (languages/Ollama/Data regions), modals, 10 category names, ~75 panel strings via `window.PFI18n` bridge, ai-operations toasts. zh-HK in Traditional, zh-CN in Simplified, with region-appropriate terminology (設定/设置, 標籤/标签, 匯入/导入…). **Documented gaps** (all fall back to English, none blank): sync-UI strings, Theme/Display-Mode/AI-Features settings rows, the onboarding banner, info.html/permissions.html bodies.
+- **E — folder sync (core).** `sync/syncStore.js`: `FileSystemDirectoryHandle` persistence in IndexedDB, per-install device id, settings in `chrome.storage.local`. `sync/syncEngine.js`: sync file `promptforge-sync.json` (`format: 1`, prompts+folders+tombstones); three-way merge against a shadow-digest snapshot (content fields only — `useCount`/`lastUsedAt` excluded from change detection, merged as max/latest); conflict policy = later `updatedAt` wins (ties → local); local edit beats remote deletion and vice versa (documented); tombstones pruned at 90 days; atomic `createWritable` writes; Dropbox "conflicted copy" folding (merge-only, never deletes provider files); watcher = storage-change debounce (3 s) + 30 s poll + window focus, with loop guard for remote-applied writes; permission-lapse → `needsPermission` flag → Settings "Reconnect" button (gesture-gated `requestPermission`). Settings → Folder Sync: choose folder / sync now / pause / disconnect + status line. Startup hook resumes watching. **Verification:** 7-scenario Node test of `mergeAll` passes, including steady-state idempotency (no sync churn). **Not verified:** real two-machine runs, iCloud eviction delays, provider conflict copies in the wild.
+- **B6 — dead code.** Removed `Views.createEditView` (~93 lines) and `checkCurrentSitePermission`; corrected the stale service-worker comment. Note: the audit's "EventBus is dead" claim was **false** — it powers `onPromptSelect`/`emitPromptSelect`; kept.
+- **Bug found during D-I:** `promptStorage.js` (WAR module) had gained imports of `language.js` and `categories.js`, which were not web-accessible — would have broken all panel storage on provider pages. Both added to WAR (pure data modules).
+
+### E-fix — Brave compatibility (later on 2026-07-28)
+
+User testing revealed Brave **blocks `showDirectoryPicker` by policy** (verified: brave-browser issues #44411/#18979). Sync now ships a **dual transport**:
+
+- `native-host/promptforge-sync-host.cjs` — dependency-free Node native-messaging host (stdio, 4-byte LE framing): ops `ping`/`get-folder`/`set-folder`/`pick-folder` (OS dialogs: osascript / zenity|kdialog / PowerShell FolderBrowserDialog)/`read`/`write` (atomic tmp+rename)/`list-conflicted`; config at `~/.promptforge-sync/config.json`. **Must be `.cjs`** — the repo's `package.json` has `"type": "module"`, which breaks CommonJS `.js` (this was the first test failure).
+- `native-host/install.sh` (macOS/Linux: Chrome/Brave/Edge/Arc profile detection) + `install.ps1` (Windows registry) — both require the extension ID argument (unpacked IDs are per-machine).
+- `sync/nativeBridge.js` — per-call `connectNative` RPC with timeout (120 s for human-at-dialog ops) and `notInstalled` detection for UI guidance.
+- `syncEngine.js` — `runSyncCycle()` dispatches on `settings.transport` (`'fsaccess'` | `'native'`); `foldConflicts()` extracted and shared; `nativeConnectFolder()` / `nativeGetFolder()` exports. Merge/apply/shadow logic is identical across transports.
+- Settings UI: transport-aware status ("via native helper" / "via browser folder API"), native subsection with system-dialog picker, manual path input, and a self-updating setup box showing the exact `install.sh` command with the live `chrome.runtime.id`. The dead-end toast on unsupported browsers now explains the Brave situation and points at the native helper.
+- **Verification:** host protocol end-to-end tested (ping/set-folder/atomic-write/read-roundtrip/list-conflicted — all pass); lint 0 errors; bundle rebuilt. **Not yet tested:** real Brave run with installed host (requires the one-time install on the user's machine — system change, awaiting approval).
+
+### Working-tree state at addendum time
+
+14 modified + 7 new files (incl. generated `content.bundle.js`), +2,142/−615 lines, **uncommitted**. Manifest still at `2.2.1`. Tag `v2.2.1` committed earlier this session but **not pushed** (awaiting approval; superseded by this work anyway).
+
+### Suggested next actions (priority order)
+
+1. Browser test pass — extended checklist: switch Chrome UI language to 中文（繁體/简体） to exercise the catalogs; test sync between two machines/profiles with an iCloud or Dropbox folder; verify panel AI buttons rewrite in the prompt's language; re-run the v2.2 checklist (panel buttons via SW proxy, search filtering, model auto-select, Settings footer).
+2. Commit + tag (`v3.0.0-alpha` or your preferred name) + push — needs your approval.
+3. Follow-up backlog: sync-UI i18n, remaining settings/page strings, B4 (alerts→toasts), B5 (Web Locks cross-context), C2/C3 (app.js decomposition), jest coverage beyond the merge engine, CJK layout QA.
+4. Still-open product questions: sync-file encryption (passphrase) yes/no; add `zh_TW` locale yes/no.

@@ -23,7 +23,17 @@
 // COMMENT: C1 — content scripts ship as one bundle (content.bundle.js, built
 // from content.bundle.entry.js). AI operations are a static import now, so
 // ai-operations.js no longer needs to be web-accessible.
-import { improvePrompt as aiImprovePrompt, generateVariants as aiGenerateVariants, autoSuggestMetadata as aiAutoSuggestMetadata } from './ai-operations.js';
+import { improvePrompt as aiImprovePrompt, generateVariants as aiGenerateVariants, autoSuggestMetadata as aiAutoSuggestMetadata, translatePrompt as aiTranslatePrompt } from './ai-operations.js';
+import { detectLanguage, SUPPORTED_LANGUAGES, DEFAULT_PROMPT_LANGUAGES, languageMeta } from './language.js';
+import { t, relativeTimeLocalized } from './i18n.js';
+import { CATEGORIES as PF_CATEGORY_DEFS } from './categories.js';
+
+// COMMENT: v3 feature D — expose language utilities for content.shared.js via
+// the window-globals contract (forms resolve "Auto" at save time).
+window.PFLanguage = { detectLanguage, SUPPORTED_LANGUAGES, DEFAULT_PROMPT_LANGUAGES, languageMeta };
+// COMMENT: v3 D-IV — i18n bridge + category registry for the panel UI.
+window.PFI18n = { t, relativeTimeLocalized };
+window.PFCategories = PF_CATEGORY_DEFS;
 
 /* COMMENT: Guard against double-injection from concurrent onAdded + onUpdated.
  * Content scripts are wrapped by Chrome; this flag prevents re-initialization. */
@@ -1409,12 +1419,12 @@ class PromptUIManager {
     PromptUIManager.setPanelHeightMode('fixed');
     // COMMENT: Button container sticks to bottom of the panel
     const btnContainer = createEl('div', { styles: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', position: 'sticky', bottom: '0', background: 'transparent' } });
-    const submitBtn = createEl('button', { innerHTML: 'Submit', className: `opm-button opm-${getMode()}` });
+    const submitBtn = createEl('button', { innerHTML: t('panel_submit', null, 'Submit'), className: `opm-button opm-${getMode()}` });
     submitBtn.addEventListener('click', () => {
       PromptUIManager.inVariableInputMode = false;
       onSubmit(varValues);
     });
-    const backBtn = createEl('button', { innerHTML: 'Back', className: `opm-button opm-${getMode()}` });
+    const backBtn = createEl('button', { innerHTML: t('panel_back', null, 'Back'), className: `opm-button opm-${getMode()}` });
     backBtn.addEventListener('click', () => {
       PromptUIManager.inVariableInputMode = false;
       PanelRouter.mount(PanelView.LIST);
@@ -1443,12 +1453,15 @@ class PromptUIManager {
       initialTitle: prompt.title,
       initialContent: prompt.content,
       initialCategory: prompt.category || null,
-      submitLabel: 'Save Changes',
-      onSubmit: async ({ title, content, tags, category }) => {
+      initialLanguage: prompt.language || null,
+      submitLabel: t('panel_save_changes', null, 'Save Changes'),
+      onSubmit: async ({ title, content, tags, category, language }) => {
         const ps = await PromptStorageManager._ps();
         const update = { title, content };
         if (Array.isArray(tags)) update.tags = tags;
         if (category) update.category = category;
+        // COMMENT: v3 feature D — language (null when undetectable on Auto)
+        update.language = language;
         // Add version
         await PromptStorageManager.addVersion(prompt.uuid, content, 'manual_edit');
         await ps.updatePrompt(prompt.uuid, update);
@@ -1469,13 +1482,13 @@ class PromptUIManager {
       const actionRow = createEl('div', { styles: { display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' } });
 
       // Version History button
-      const vhBtn = createEl('button', { innerHTML: '📋 Versions', className: 'opm-button opm-standard' });
+      const vhBtn = createEl('button', { innerHTML: t('panel_versions', null, '📋 Versions'), className: 'opm-button opm-standard' });
       vhBtn.style.cssText = btnCss;
       vhBtn.addEventListener('click', () => PromptUIManager.showVersionHistory(prompt.uuid));
       actionRow.appendChild(vhBtn);
 
       // Improve button
-      const impBtn = createEl('button', { innerHTML: '✨ Improve', className: 'opm-button opm-standard' });
+      const impBtn = createEl('button', { innerHTML: t('panel_improve', null, '✨ Improve'), className: 'opm-button opm-standard' });
       impBtn.style.cssText = btnCss;
       impBtn.addEventListener('click', async () => {
         await PromptUIManager.improvePrompt(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
@@ -1483,12 +1496,53 @@ class PromptUIManager {
       actionRow.appendChild(impBtn);
 
       // Variants button
-      const varBtn = createEl('button', { innerHTML: '🔄 Variants', className: 'opm-button opm-standard' });
+      const varBtn = createEl('button', { innerHTML: t('panel_variants_btn', null, '🔄 Variants'), className: 'opm-button opm-standard' });
       varBtn.style.cssText = btnCss;
       varBtn.addEventListener('click', async () => {
         await PromptUIManager.generateVariants(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
       });
       actionRow.appendChild(varBtn);
+
+      // COMMENT: v3 feature D-V — Translate button: click reveals a target
+      // picker (all supported languages except the prompt's current one).
+      const trBtn = createEl('button', { innerHTML: t('panel_translate', null, '🌐 Translate'), className: 'opm-button opm-standard' });
+      trBtn.style.cssText = btnCss;
+      trBtn.addEventListener('click', () => {
+        if (actionRow.querySelector('.opm-translate-pick')) return;
+        const pick = createEl('select', { className: `opm-translate-pick opm-input-field opm-${getMode()}`, styles: { borderRadius: '4px', fontSize: '12px' } });
+        pick.appendChild(createEl('option', { attributes: { value: '' } }, [t('panel_translate_to', null, 'Translate to…')]));
+        for (const l of (window.PFLanguage ? window.PFLanguage.SUPPORTED_LANGUAGES : [])) {
+          if (l.code !== prompt.language) pick.appendChild(createEl('option', { attributes: { value: l.code } }, [l.label]));
+        }
+        pick.addEventListener('change', async () => {
+          const to = pick.value;
+          pick.remove();
+          if (to) await PromptUIManager.translatePrompt(prompt.uuid, to, qs(`#${SELECTORS.PROMPT_LIST}`));
+        });
+        actionRow.appendChild(pick);
+      });
+      actionRow.appendChild(trBtn);
+
+      // COMMENT: v3 feature D-VI — Fork ▾ (duplicate / fork to language).
+      const forkBtn = createEl('button', { innerHTML: t('editor_fork', null, 'Fork ▾'), className: 'opm-button opm-standard' });
+      forkBtn.style.cssText = btnCss;
+      forkBtn.addEventListener('click', () => {
+        if (actionRow.querySelector('.opm-fork-pick')) return;
+        const pick = createEl('select', { className: `opm-fork-pick opm-input-field opm-${getMode()}`, styles: { borderRadius: '4px', fontSize: '12px' } });
+        pick.appendChild(createEl('option', { attributes: { value: '' } }, [t('editor_fork_menu', null, 'Fork / duplicate…')]));
+        pick.appendChild(createEl('option', { attributes: { value: 'duplicate' } }, [t('editor_duplicate', null, 'Duplicate (same language)')]));
+        for (const l of (window.PFLanguage ? window.PFLanguage.SUPPORTED_LANGUAGES : [])) {
+          if (l.code !== prompt.language) pick.appendChild(createEl('option', { attributes: { value: 'fork:' + l.code } }, [t('editor_fork_lang', [l.label], `Fork to ${l.label}`)]));
+        }
+        pick.addEventListener('change', async () => {
+          const v = pick.value;
+          pick.remove();
+          if (v === 'duplicate') await PromptUIManager.forkPrompt(prompt, null);
+          else if (v.startsWith('fork:')) await PromptUIManager.forkPrompt(prompt, v.slice(5));
+        });
+        actionRow.appendChild(pick);
+      });
+      actionRow.appendChild(forkBtn);
 
       const saveBtn = form.querySelector('.opm-button');
       if (saveBtn && saveBtn.parentNode) saveBtn.parentNode.insertBefore(actionRow, saveBtn);
@@ -1538,7 +1592,7 @@ class PromptUIManager {
     try {
       const ps = await PromptStorageManager._ps();
       const versions = await ps.getVersions(promptUuid);
-      if (!versions || versions.length === 0) { alert('No version history yet.'); return; }
+      if (!versions || versions.length === 0) { alert(t('panel_no_versions', null, 'No version history yet.')); return; }
       // COMMENT: --opm-bg/--opm-text/--opm-border don't exist in the theme
       // sheet (which defines --light-bg etc.), so the modal was permanently
       // light-themed. Resolve colors directly from the current mode.
@@ -1551,7 +1605,7 @@ class PromptUIManager {
       const modal = createEl('div');
       modal.style.cssText = `background:${themeBg};color:${themeText};border:1px solid ${themeBorder};border-radius:12px;padding:20px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);`;
       const header = createEl('div', { styles: { display: 'flex', justifyContent: 'space-between', marginBottom: '16px' } });
-      header.appendChild(createEl('h3', { styles: { margin: 0, fontSize: '16px' } }, ['Version History']));
+      header.appendChild(createEl('h3', { styles: { margin: 0, fontSize: '16px' } }, [t('panel_version_history', null, 'Version History')]));
       const closeBtn = createEl('button', { innerHTML: '×', className: 'opm-button-close' });
       closeBtn.style.cssText = `background:none;border:none;font-size:24px;cursor:pointer;color:${themeText};`;
       closeBtn.addEventListener('click', () => overlay.remove());
@@ -1567,19 +1621,19 @@ class PromptUIManager {
         metaRow.appendChild(createEl('span', { styles: { color: '#666', fontSize: '12px' } }, [` ${v.source} · ${new Date(v.createdAt).toLocaleString()}`]));
         row.appendChild(metaRow);
         const btns = createEl('div', { styles: { display: 'flex', gap: '4px', marginTop: '4px' } });
-        const viewBtn = createEl('button', { innerHTML: 'View', className: 'opm-button opm-standard' });
+        const viewBtn = createEl('button', { innerHTML: t('panel_view', null, 'View'), className: 'opm-button opm-standard' });
         viewBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;';
         viewBtn.addEventListener('click', () => {
           alert(`Version ${i + 1} (${v.source}):\n\n${v.content}`);
         });
         btns.appendChild(viewBtn);
         if (i < versions.length - 1) {
-          const restoreBtn = createEl('button', { innerHTML: 'Restore', className: 'opm-button opm-standard' });
+          const restoreBtn = createEl('button', { innerHTML: t('panel_restore', null, 'Restore'), className: 'opm-button opm-standard' });
           restoreBtn.style.cssText = 'padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;';
           restoreBtn.addEventListener('click', async () => {
             await ps.restoreVersion(promptUuid, i);
             overlay.remove();
-            alert(`Restored as v${versions.length}`);
+            alert(t('panel_restored', [String(versions.length)], `Restored as v${versions.length}`));
             await PanelRouter.mount(PanelView.LIST);
           });
           btns.appendChild(restoreBtn);
@@ -1590,7 +1644,7 @@ class PromptUIManager {
       overlay.appendChild(modal);
       overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
       document.body.appendChild(overlay);
-    } catch (e) { console.error('Version history failed:', e); alert('Failed to load version history: ' + e.message); }
+    } catch (e) { console.error('Version history failed:', e); alert(t('panel_versions_failed', [e.message], 'Failed to load version history: ' + e.message)); }
   }
 
   static async improvePrompt(promptUuid, listEl) {
@@ -1603,6 +1657,49 @@ class PromptUIManager {
 
   static async autoSuggestMetadata(promptUuid, listEl) {
     return aiAutoSuggestMetadata(promptUuid, listEl);
+  }
+
+  static async translatePrompt(promptUuid, toLang, listEl) {
+    return aiTranslatePrompt(promptUuid, toLang, listEl);
+  }
+
+  /**
+   * COMMENT: v3 feature D-VI — fork a prompt into a language-linked group.
+   * toLang = null duplicates in place; otherwise the content is translated
+   * via the SW proxy and saved as a sibling sharing the groupId (created and
+   * back-filled onto the source on the first fork).
+   */
+  static async forkPrompt(prompt, toLang) {
+    const ps = await PromptStorageManager._ps();
+    // COMMENT: Bugfix — back-fill the source's language when unset so group
+    // chips render a real language for the original (never "NULL").
+    if (!prompt.language && window.PFLanguage) {
+      const detected = window.PFLanguage.detectLanguage(prompt.content || '').code;
+      if (detected) {
+        await ps.updatePrompt(prompt.uuid, { language: detected });
+        prompt.language = detected;
+      }
+    }
+    let groupId = prompt.groupId;
+    if (!groupId) {
+      groupId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `g-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      await ps.updatePrompt(prompt.uuid, { groupId });
+    }
+    let content = prompt.content;
+    let language = prompt.language || null;
+    if (toLang && toLang !== prompt.language) {
+      const { translateText } = await import(chrome.runtime.getURL('ai-operations.js'));
+      content = await translateText(prompt.content, toLang, prompt.language || null);
+      if (!content) return;
+      language = toLang;
+    }
+    await PromptStorageManager.savePrompt({
+      title: prompt.title, content, language, groupId,
+      tags: prompt.tags, category: prompt.category,
+    });
+    await PanelRouter.mount(PanelView.LIST);
   }
 
   static createSettingsForm() {
@@ -1848,33 +1945,6 @@ const PromptMediator = (() => {
     promptSelectHandler: null,
     mutationObserver: null,
     storageWatcherAttached: false
-  };
-
-  /**
-   * COMMENT: Check if we have permission for the current site's provider.
-   * @returns {Promise<boolean>}
-   */
-  const checkCurrentSitePermission = async () => {
-    try {
-      const response = await fetch(chrome.runtime.getURL('llm_providers.json'));
-      if (!response.ok) return false;
-      const data = await response.json();
-      const currentUrl = window.location.href;
-      for (const provider of data.llm_providers) {
-        const regexPattern = provider.pattern
-          .replace(/\\/g, '\\\\')
-          .replace(/[.]/g, '\\.')
-          .replace(/[*]/g, '.*');
-        const urlRegex = new RegExp(`^${regexPattern}`);
-        if (urlRegex.test(currentUrl)) {
-          const hasPermission = await chrome.permissions.contains({ origins: [provider.pattern] });
-          return hasPermission;
-        }
-      }
-    } catch (e) {
-      console.warn('[PromptForge] Failed to check site permission:', e);
-    }
-    return false;
   };
 
   /**

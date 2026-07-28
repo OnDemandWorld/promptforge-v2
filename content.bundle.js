@@ -947,28 +947,29 @@
       }
       const fallbackIconFilter = "invert(37%) sepia(74%) saturate(380%) hue-rotate(175deg) brightness(93%) contrast(88%)";
       const iconFilter = () => typeof getIconFilterFn === "function" ? getIconFilterFn() : fallbackIconFilter;
+      const tt2 = (key, subs, fallback) => window.PFI18n ? window.PFI18n.t(key, subs || null, fallback) : fallback;
       window.__PF_PROMPT_INDEX = window.__PF_PROMPT_INDEX || /* @__PURE__ */ new Map();
       const indexPromptForSearch = (prompt) => {
         if (!prompt || !prompt.uuid) return;
         window.__PF_PROMPT_INDEX.set(prompt.uuid, {
           title: (prompt.title || "").toLowerCase(),
           content: (prompt.content || "").toLowerCase(),
-          tags: Array.isArray(prompt.tags) ? prompt.tags.map((t) => String(t).toLowerCase()) : []
+          tags: Array.isArray(prompt.tags) ? prompt.tags.map((t2) => String(t2).toLowerCase()) : []
         });
       };
       const ICON_SVGS = {
-        list: `<img src="${chrome.runtime.getURL("icons/list.svg")}" width="16" height="16" alt="List Prompts" title="List Prompts" style="filter: ${iconFilter()}">`,
-        add: `<img src="${chrome.runtime.getURL("icons/new.svg")}" width="16" height="16" alt="Add Prompt" title="Add Prompt" style="filter: ${iconFilter()}">`,
-        delete: `<img src="${chrome.runtime.getURL("icons/delete.svg")}" width="16" height="16" alt="Delete" title="Delete" style="filter: ${iconFilter()}">`,
-        edit: `<img src="${chrome.runtime.getURL("icons/edit.svg")}" width="16" height="16" alt="Edit" title="Edit" style="filter: ${iconFilter()}">`,
-        settings: `<img src="${chrome.runtime.getURL("icons/settings.svg")}" width="16" height="16" alt="Settings" title="Settings" style="filter: ${iconFilter()}">`,
-        help: `<img src="${chrome.runtime.getURL("icons/help.svg")}" width="16" height="16" alt="Help" title="Help" style="filter: ${iconFilter()}">`
+        list: `<img src="${chrome.runtime.getURL("icons/list.svg")}" width="16" height="16" alt="${tt2("panel_icon_list", null, "List Prompts")}" title="${tt2("panel_icon_list", null, "List Prompts")}" style="filter: ${iconFilter()}">`,
+        add: `<img src="${chrome.runtime.getURL("icons/new.svg")}" width="16" height="16" alt="${tt2("panel_icon_add", null, "Add Prompt")}" title="${tt2("panel_icon_add", null, "Add Prompt")}" style="filter: ${iconFilter()}">`,
+        delete: `<img src="${chrome.runtime.getURL("icons/delete.svg")}" width="16" height="16" alt="${tt2("panel_icon_delete", null, "Delete")}" title="${tt2("panel_icon_delete", null, "Delete")}" style="filter: ${iconFilter()}">`,
+        edit: `<img src="${chrome.runtime.getURL("icons/edit.svg")}" width="16" height="16" alt="${tt2("panel_icon_edit", null, "Edit")}" title="${tt2("panel_icon_edit", null, "Edit")}" style="filter: ${iconFilter()}">`,
+        settings: `<img src="${chrome.runtime.getURL("icons/settings.svg")}" width="16" height="16" alt="${tt2("panel_icon_settings", null, "Settings")}" title="${tt2("panel_icon_settings", null, "Settings")}" style="filter: ${iconFilter()}">`,
+        help: `<img src="${chrome.runtime.getURL("icons/help.svg")}" width="16" height="16" alt="${tt2("panel_icon_help", null, "Help")}" title="${tt2("panel_icon_help", null, "Help")}" style="filter: ${iconFilter()}">`
       };
       const TagService2 = /* @__PURE__ */ (() => {
         const computeCounts = (prompts = []) => {
           const counts = /* @__PURE__ */ new Map();
-          prompts.forEach((p) => (Array.isArray(p.tags) ? p.tags : []).forEach((t) => {
-            const key = String(t).trim();
+          prompts.forEach((p) => (Array.isArray(p.tags) ? p.tags : []).forEach((t2) => {
+            const key = String(t2).trim();
             if (!key) return;
             counts.set(key, (counts.get(key) || 0) + 1);
           }));
@@ -988,14 +989,14 @@
           const counts = countsOrPrompts instanceof Map ? countsOrPrompts : await getCounts(countsOrPrompts);
           const order = await window.PromptStorageManager.getTagsOrder();
           const tags = Array.from(counts.keys());
-          const missing = tags.filter((t) => !order.includes(t)).sort((a, b) => a.localeCompare(b));
-          return [...order.filter((t) => counts.has(t)), ...missing];
+          const missing = tags.filter((t2) => !order.includes(t2)).sort((a, b) => a.localeCompare(b));
+          return [...order.filter((t2) => counts.has(t2)), ...missing];
         };
         const getSuggestions = async ({ term = "", exclude = /* @__PURE__ */ new Set() } = {}) => {
           const counts = await getCounts();
           const ordered = await getOrderedTags(counts);
           const lcTerm = term.trim().toLowerCase();
-          return ordered.filter((t) => !exclude.has(t) && (lcTerm === "" || String(t).toLowerCase().includes(lcTerm)));
+          return ordered.filter((t2) => !exclude.has(t2) && (lcTerm === "" || String(t2).toLowerCase().includes(lcTerm)));
         };
         return { getCounts, getOrderedTags, getSuggestions };
       })();
@@ -1020,7 +1021,7 @@
           const tagsSet = new Set(Array.isArray(initialTags) ? initialTags : []);
           const row = createEl3("div", { className: `opm-tag-row opm-${getMode2()}` });
           const pills = createEl3("div", { className: "opm-tags-container" });
-          const input = createEl3("input", { attributes: { type: "text", placeholder: "Tags" }, className: `opm-tag-input opm-${getMode2()}` });
+          const input = createEl3("input", { attributes: { type: "text", placeholder: tt2("panel_tags_ph", null, "Tags") }, className: `opm-tag-input opm-${getMode2()}` });
           const suggestions = createEl3("div", { className: `opm-tag-suggestions opm-${getMode2()}`, styles: { display: "none" } });
           let activeIndex = -1;
           let options = [];
@@ -1069,12 +1070,12 @@
           const refreshSuggestions = async () => {
             options = await TagService2.getSuggestions({ term: input.value, exclude: tagsSet });
             suggestions.innerHTML = "";
-            options.forEach((t, idx) => {
-              const item = createEl3("div", { className: "opm-tag-suggestion-item" }, [t]);
+            options.forEach((t2, idx) => {
+              const item = createEl3("div", { className: "opm-tag-suggestion-item" }, [t2]);
               if (idx === activeIndex) item.classList.add("active");
               item.addEventListener("mousedown", (e) => {
                 e.preventDefault();
-                addTag(t);
+                addTag(t2);
                 input.value = "";
                 suggestions.style.display = "none";
               });
@@ -1271,7 +1272,7 @@
             });
             const deleteIcon = Elements.createIconButton("delete", (e) => {
               e.stopPropagation();
-              if (confirm('Delete "' + prompt.title + '"?')) window.PromptUIManager.deletePrompt(prompt.uuid);
+              if (confirm(tt2("panel_delete_confirm", [prompt.title], 'Delete "' + prompt.title + '"?'))) window.PromptUIManager.deletePrompt(prompt.uuid);
             });
             actions.append(editIcon, deleteIcon);
             item.append(dragHandle, info, actions);
@@ -1321,7 +1322,7 @@
             const search = createEl3("input", {
               id: SELECTORS3.PROMPT_SEARCH_INPUT,
               className: `opm-search-input opm-${getMode2()}`,
-              attributes: { type: "text", placeholder: "Type to search", style: "border-radius: 4px;" }
+              attributes: { type: "text", placeholder: tt2("panel_ph_search", null, "Type to search"), style: "border-radius: 4px;" }
             });
             search.addEventListener("input", (e) => {
               PromptUIManager3.filterPromptItems(e.target.value);
@@ -1477,37 +1478,45 @@
           }
         };
         const Views = {
-          createPromptForm({ initialTitle = "", initialContent = "", submitLabel = "Save", onSubmit, initialCategory = null }) {
+          createPromptForm({ initialTitle = "", initialContent = "", submitLabel = null, onSubmit, initialCategory = null, initialLanguage = null }) {
             const form = createEl3("div", { className: `opm-form-container opm-create-form opm-${getMode2()}`, styles: { padding: "0", display: "flex", flexDirection: "column", gap: "4px" } });
-            const titleIn = createEl3("input", { attributes: { placeholder: "Prompt Title" }, className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px" } });
+            const titleIn = createEl3("input", { attributes: { placeholder: tt2("panel_ph_title", null, "Prompt Title") }, className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px" } });
             const contentArea = createEl3("textarea", {
-              attributes: { placeholder: "Write your prompt. Use hashtags for #variables#" },
+              attributes: { placeholder: tt2("panel_ph_write", null, "Write your prompt. Use hashtags for #variables#") },
               className: `opm-textarea-field opm-${getMode2()}`,
               styles: { flex: "1 1 auto", minHeight: "0", height: "auto" }
             });
             titleIn.value = initialTitle;
             contentArea.value = initialContent;
             const catSelect = createEl3("select", { className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px", fontSize: "13px" } });
-            const defaultCat = createEl3("option", {}, ["Uncategorized"]);
-            catSelect.appendChild(defaultCat);
-            const categories = ["Writing & Content", "Coding & Development", "Analysis & Research", "Creative & Design", "Business & Marketing", "Education & Learning", "Data & Technical", "Communication & Email", "Productivity & Planning", "Other"];
-            for (const c of categories) {
-              const o = createEl3("option", {}, [c]);
-              if (c === initialCategory) o.selected = true;
+            catSelect.appendChild(createEl3("option", { attributes: { value: "" } }, [tt2("panel_uncategorized", null, "Uncategorized")]));
+            for (const c of window.PFCategories || []) {
+              const o = createEl3("option", { attributes: { value: c.name } }, [tt2(`cat_${c.id}`, null, c.name)]);
+              if (c.name === initialCategory) o.selected = true;
               catSelect.appendChild(o);
             }
-            const saveBtn = createEl3("button", { innerHTML: submitLabel, className: `opm-button opm-${getMode2()}` });
+            const langSelect = createEl3("select", { className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px", fontSize: "13px" } });
+            langSelect.appendChild(createEl3("option", { attributes: { value: "auto" } }, ["Auto-detect language"]));
+            if (window.PFLanguage) {
+              for (const l of window.PFLanguage.SUPPORTED_LANGUAGES) {
+                const o = createEl3("option", { attributes: { value: l.code } }, [l.label]);
+                if (l.code === initialLanguage) o.selected = true;
+                langSelect.appendChild(o);
+              }
+            }
+            const saveBtn = createEl3("button", { innerHTML: submitLabel || tt2("panel_save", null, "Save"), className: `opm-button opm-${getMode2()}` });
             saveBtn.addEventListener("click", async (e) => {
               e.stopPropagation();
-              const t = titleIn.value.trim(), c = contentArea.value.trim();
-              if (!t || !c) {
-                alert("Please fill in both title and content.");
+              const t2 = titleIn.value.trim(), c = contentArea.value.trim();
+              if (!t2 || !c) {
+                alert(tt2("panel_fill_both", null, "Please fill in both title and content."));
                 return;
               }
-              const cat = catSelect.value !== "Uncategorized" ? catSelect.value : null;
-              if (typeof onSubmit === "function") await onSubmit({ title: t, content: c, category: cat });
+              const cat = catSelect.value || null;
+              const language = langSelect.value === "auto" ? window.PFLanguage ? window.PFLanguage.detectLanguage(c).code : null : langSelect.value;
+              if (typeof onSubmit === "function") await onSubmit({ title: t2, content: c, category: cat, language });
             });
-            form.append(titleIn, contentArea, catSelect, saveBtn);
+            form.append(titleIn, contentArea, catSelect, langSelect, saveBtn);
             form.addEventListener("click", (e) => e.stopPropagation());
             return form;
           },
@@ -1580,19 +1589,24 @@
             if (search) search.style.display = "none";
             const enableTags = await window.PromptStorageManager.getEnableTags();
             const form = createEl3("div", { className: `opm-form-container opm-${getMode2()}`, styles: { padding: "0", display: "flex", flexDirection: "column", gap: "8px" } });
-            const titleIn = createEl3("input", { attributes: { placeholder: "Prompt Title" }, className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px" } });
+            const titleIn = createEl3("input", { attributes: { placeholder: tt2("panel_ph_title", null, "Prompt Title") }, className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px" } });
             const contentArea = createEl3("textarea", {
-              attributes: { placeholder: "Enter your prompt here. Add variables with #examplevariable#" },
+              attributes: { placeholder: tt2("panel_ph_enter", null, "Enter your prompt here. Add variables with #examplevariable#") },
               className: `opm-textarea-field opm-${getMode2()}`,
               styles: { flex: "1 1 auto", minHeight: "0", height: "auto" }
             });
             titleIn.value = "";
             contentArea.value = prefill || "";
             const catSelect = createEl3("select", { className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px", fontSize: "13px" } });
-            const defaultCat = createEl3("option", {}, ["Uncategorized"]);
-            catSelect.appendChild(defaultCat);
-            const categories = ["Writing & Content", "Coding & Development", "Analysis & Research", "Creative & Design", "Business & Marketing", "Education & Learning", "Data & Technical", "Communication & Email", "Productivity & Planning", "Other"];
-            for (const c of categories) catSelect.appendChild(createEl3("option", {}, [c]));
+            catSelect.appendChild(createEl3("option", { attributes: { value: "" } }, [tt2("panel_uncategorized", null, "Uncategorized")]));
+            for (const c of window.PFCategories || []) catSelect.appendChild(createEl3("option", { attributes: { value: c.name } }, [tt2(`cat_${c.id}`, null, c.name)]));
+            const langSelect = createEl3("select", { className: `opm-input-field opm-${getMode2()}`, styles: { borderRadius: "4px", fontSize: "13px" } });
+            langSelect.appendChild(createEl3("option", { attributes: { value: "auto" } }, ["Auto-detect language"]));
+            if (window.PFLanguage) {
+              for (const l of window.PFLanguage.SUPPORTED_LANGUAGES) {
+                langSelect.appendChild(createEl3("option", { attributes: { value: l.code } }, [l.label]));
+              }
+            }
             let tagsBlock = null;
             let tagInput = null;
             if (enableTags) {
@@ -1601,24 +1615,25 @@
               tagsBlock = createEl3("div");
               tagsBlock.append(label, tagInput.element);
             }
-            const saveBtn = createEl3("button", { innerHTML: "Create Prompt", className: `opm-button opm-${getMode2()}` });
+            const saveBtn = createEl3("button", { innerHTML: tt2("panel_create", null, "Create Prompt"), className: `opm-button opm-${getMode2()}` });
             saveBtn.addEventListener("click", async (e) => {
               e.stopPropagation();
-              const t = titleIn.value.trim(), c = contentArea.value.trim();
-              if (!t || !c) {
-                alert("Please fill in both title and content.");
+              const t2 = titleIn.value.trim(), c = contentArea.value.trim();
+              if (!t2 || !c) {
+                alert(tt2("panel_fill_both", null, "Please fill in both title and content."));
                 return;
               }
               const tags = enableTags && tagInput ? tagInput.getTags() : [];
-              const cat = catSelect.value !== "Uncategorized" ? catSelect.value : null;
-              const res = await window.PromptStorageManager.savePrompt({ title: t, content: c, tags, category: cat });
+              const cat = catSelect.value || null;
+              const language = langSelect.value === "auto" ? window.PFLanguage ? window.PFLanguage.detectLanguage(c).code : null : langSelect.value;
+              const res = await window.PromptStorageManager.savePrompt({ title: t2, content: c, tags, category: cat, language });
               if (!res.success) {
-                alert("Error saving prompt.");
+                alert(tt2("panel_save_error", null, "Error saving prompt."));
                 return;
               }
               window.PanelRouter.mount(window.PanelView.LIST);
             });
-            form.append(titleIn, contentArea, catSelect);
+            form.append(titleIn, contentArea, catSelect, langSelect);
             if (tagsBlock) form.append(tagsBlock);
             form.append(saveBtn);
             form.addEventListener("click", (e) => e.stopPropagation());
@@ -1626,10 +1641,10 @@
           },
           createSettingsForm() {
             const form = createEl3("div", { className: `opm-form-container opm-${getMode2()}`, styles: { padding: "12px", display: "flex", flexDirection: "column", gap: "8px" } });
-            const title = createEl3("div", { styles: { fontWeight: "bold", fontSize: "16px", marginBottom: "10px" }, innerHTML: "Settings" });
+            const title = createEl3("div", { styles: { fontWeight: "bold", fontSize: "16px", marginBottom: "10px" }, innerHTML: tt2("panel_settings_title", null, "Settings") });
             const settings = createEl3("div", { styles: { display: "flex", flexDirection: "column", gap: "12px" } });
             settings.appendChild(Elements.createToggleRow({
-              labelText: "Hot Corner Mode",
+              labelText: tt2("panel_hot_corner", null, "Hot Corner Mode"),
               getValue: async () => await window.PromptStorageManager.getDisplayMode() === "hotCorner",
               onToggle: async (active) => {
                 const newMode = active ? "hotCorner" : "standard";
@@ -1645,14 +1660,14 @@
               }
             }));
             settings.appendChild(Elements.createToggleRow({
-              labelText: "Enable tags",
+              labelText: tt2("panel_enable_tags", null, "Enable tags"),
               getValue: async () => await window.PromptStorageManager.getEnableTags(),
               onToggle: async (active) => {
                 await window.PromptStorageManager.saveEnableTags(active);
               }
             }));
             settings.appendChild(Elements.createToggleRow({
-              labelText: "Force Dark Mode",
+              labelText: tt2("panel_force_dark", null, "Force Dark Mode"),
               getValue: async () => {
                 const enabled = await window.PromptStorageManager.getForceDarkMode();
                 window.isDarkModeForced = !!enabled;
@@ -1665,7 +1680,7 @@
               }
             }));
             const fullSettingsBtn = createEl3("button", {
-              innerHTML: "Open Full Settings \u2197",
+              innerHTML: tt2("panel_open_full", null, "Open Full Settings \u2197"),
               className: `opm-button opm-${getMode2()}`,
               styles: { marginTop: "4px" }
             });
@@ -1679,9 +1694,9 @@
               innerHTML: "Ollama config, model selection, and integrations are in full settings."
             });
             settings.appendChild(hint);
-            const dataSectionTitle = createEl3("div", { styles: { fontWeight: "bold", fontSize: "14px", marginTop: "6px" }, innerHTML: "Prompt Management" });
+            const dataSectionTitle = createEl3("div", { styles: { fontWeight: "bold", fontSize: "14px", marginTop: "6px" }, innerHTML: tt2("panel_prompt_mgmt", null, "Prompt Management") });
             const dataActions = createEl3("div", { styles: { display: "flex", gap: "8px" } });
-            const exportBtn = createEl3("button", { innerHTML: "Export", className: `opm-button opm-${getMode2()}` });
+            const exportBtn = createEl3("button", { innerHTML: tt2("panel_export", null, "Export"), className: `opm-button opm-${getMode2()}` });
             exportBtn.addEventListener("click", async (e) => {
               e.stopPropagation();
               try {
@@ -1698,7 +1713,7 @@
                 alert("Export failed.");
               }
             });
-            const importBtn = createEl3("button", { innerHTML: "Import", className: `opm-button opm-${getMode2()}` });
+            const importBtn = createEl3("button", { innerHTML: tt2("panel_import", null, "Import"), className: `opm-button opm-${getMode2()}` });
             importBtn.addEventListener("click", async (e) => {
               e.stopPropagation();
               const fileInput = createEl3("input", { attributes: { type: "file", accept: ".json" } });
@@ -1711,8 +1726,8 @@
                     if (!Array.isArray(imported)) throw new Error("Invalid format");
                     const merged = await window.PromptStorageManager.mergeImportedPrompts(imported);
                     window.PromptUIManager.refreshPromptList(merged);
-                    importBtn.textContent = "Import successful!";
-                    setTimeout(() => importBtn.textContent = "Import", window.IMPORT_SUCCESS_RESET_MS || 2e3);
+                    importBtn.textContent = tt2("panel_import_success", null, "Import successful!");
+                    setTimeout(() => importBtn.textContent = tt2("panel_import", null, "Import"), window.IMPORT_SUCCESS_RESET_MS || 2e3);
                   } catch (err) {
                     alert("Invalid JSON file format.");
                   }
@@ -1722,7 +1737,7 @@
             });
             dataActions.append(exportBtn, importBtn);
             const deleteAllBtn = createEl3("button", {
-              innerHTML: "Delete all prompts",
+              innerHTML: tt2("panel_delete_all", null, "Delete all prompts"),
               className: `opm-button opm-${getMode2()}`,
               styles: { backgroundColor: "#9CA3AF", marginTop: "4px" }
             });
@@ -1736,7 +1751,7 @@
                 alert("Failed to delete prompts.");
               }
             });
-            const tagMgmtTitle = createEl3("div", { styles: { fontWeight: "bold", fontSize: "14px", marginTop: "12px", display: "none" }, innerHTML: "Tag management" });
+            const tagMgmtTitle = createEl3("div", { styles: { fontWeight: "bold", fontSize: "14px", marginTop: "12px", display: "none" }, innerHTML: tt2("panel_tag_mgmt", null, "Tag management") });
             const tagMgmtContainer = createEl3("div", { styles: { display: "none", flexDirection: "column", gap: "6px" } });
             (async () => {
               try {
@@ -1861,16 +1876,16 @@
                     const removeBtn = createEl3("button", { innerHTML: "\xD7", styles: { marginLeft: "6px", border: "none", background: "transparent", cursor: "pointer", fontSize: "14px", lineHeight: "1" } });
                     removeBtn.addEventListener("click", async (e) => {
                       e.stopPropagation();
-                      if (!confirm(`Remove tag "${tag}" from all prompts?`)) return;
+                      if (!confirm(tt2("panel_remove_tag_confirm", [tag], `Remove tag "${tag}" from all prompts?`))) return;
                       try {
                         const prompts = await window.PromptStorageManager.getPrompts();
                         const updated = prompts.map((p) => {
-                          const nextTags = Array.isArray(p.tags) ? p.tags.filter((t) => t !== tag) : [];
+                          const nextTags = Array.isArray(p.tags) ? p.tags.filter((t2) => t2 !== tag) : [];
                           return { ...p, tags: nextTags };
                         });
                         await window.PromptStorageManager.setPrompts(updated);
                         counts = await TagService2.getCounts(updated);
-                        finalOrder = finalOrder.filter((t) => t !== tag);
+                        finalOrder = finalOrder.filter((t2) => t2 !== tag);
                         await window.PromptStorageManager.saveTagsOrder(finalOrder);
                         render();
                       } catch (_) {
@@ -1887,110 +1902,6 @@
             })();
             form.append(title, settings, dataSectionTitle, dataActions, deleteAllBtn, tagMgmtTitle, tagMgmtContainer);
             return form;
-          },
-          async createEditView() {
-            const prompts = await window.PromptStorageManager.getPrompts();
-            const container = createEl3("div", { className: `opm-form-container opm-view-list opm-${getMode2()}`, styles: { padding: "0", display: "flex", flexDirection: "column", gap: "4px", minHeight: "0" } });
-            const promptsContainer = createEl3("div", { className: `${SELECTORS3.PROMPT_ITEMS_CONTAINER} opm-prompt-list-items opm-${getMode2()}`, styles: { maxHeight: "350px", overflowY: "auto", marginBottom: "4px" } });
-            const reorder = Reorder.attach(
-              promptsContainer,
-              prompts,
-              async (newPrompts) => {
-                prompts.splice(0, prompts.length, ...newPrompts);
-                Array.from(promptsContainer.children).filter((node) => node.classList?.contains("opm-prompt-list-item")).forEach((node, idx) => {
-                  node.dataset.index = idx;
-                });
-                await window.PromptStorageManager.setPrompts(newPrompts);
-              }
-            );
-            prompts.forEach((p, idx) => {
-              const item = createEl3("div", { className: `opm-prompt-list-item opm-${getMode2()}`, styles: { justifyContent: "space-between", padding: "4px 4px", margin: "6px 0" } });
-              item.dataset.index = idx;
-              const dragHandle = createEl3("div", {
-                className: "opm-drag-handle",
-                innerHTML: `
-              <img 
-                src="${chrome.runtime.getURL("icons/drag_indicator.svg")}" 
-                width="16" 
-                height="16" 
-                alt="Drag handle" 
-                title="Drag to reorder"
-                style="display: block; opacity: 0.9; filter: ${iconFilter()}"
-              >
-            `,
-                styles: {
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "16px",
-                  height: "16px",
-                  marginRight: "4px",
-                  marginLeft: "0px",
-                  flex: "0 0 auto",
-                  cursor: "grab",
-                  userSelect: "none",
-                  opacity: "0.9"
-                }
-              });
-              reorder.wireItem(item, idx, dragHandle);
-              const info = createEl3("div", { styles: { display: "flex", flexDirection: "column", flex: "1", gap: "2px" } });
-              const text = createEl3("div", { styles: { flex: "0 0 auto" } });
-              text.textContent = p.title;
-              info.appendChild(text);
-              item.dataset.uuid = p.uuid;
-              indexPromptForSearch(p);
-              const actions = createEl3("div", { styles: { display: "flex", gap: "4px" } });
-              const editIcon = Elements.createIconButton("edit", () => {
-                window.PromptUIManager.showEditForm(p);
-              });
-              const deleteIcon = Elements.createIconButton("delete", () => {
-                if (confirm(`Delete "${p.title}"?`)) window.PromptUIManager.deletePrompt(p.uuid);
-              });
-              actions.append(editIcon, deleteIcon);
-              item.append(dragHandle, info, actions);
-              promptsContainer.appendChild(item);
-            });
-            container.appendChild(promptsContainer);
-            (async () => {
-              const tagsHost = document.querySelector(`#${SELECTORS3.PANEL_CONTENT} .opm-tags-filter-host`);
-              if (!tagsHost) return;
-              try {
-                const enableTags = await window.PromptStorageManager.getEnableTags();
-                if (!enableTags) {
-                  tagsHost.style.display = "none";
-                  return;
-                }
-                const counts = await TagService2.getCounts(prompts);
-                if (counts.size === 0) {
-                  tagsHost.style.display = "none";
-                  return;
-                }
-                const ordered = await TagService2.getOrderedTags(counts);
-                let persisted = "all";
-                try {
-                  persisted = (await window.PromptStorageManager.getActiveTagFilter() || "all").toLowerCase();
-                } catch (_) {
-                  persisted = "all";
-                }
-                const prev = (window.PromptUIManager.activeTagFilter || persisted || "all").toLowerCase();
-                const selected = prev !== "all" && counts.has(prev) ? prev : "all";
-                window.PromptUIManager.activeTagFilter = selected;
-                const bar = Elements.createTagsBar({
-                  tags: ordered,
-                  counts,
-                  selectedTag: selected,
-                  onSelect: (tag) => {
-                    window.PromptUIManager.filterByTag(tag);
-                  }
-                });
-                tagsHost.replaceWith(bar);
-                window.ScrollVisibilityManager?.observe(bar);
-                window.PromptUIManager.filterByTag(selected);
-              } catch (_) {
-                tagsHost.style.display = "none";
-              }
-            })();
-            return container;
           }
         };
         const Behaviors = {
@@ -2135,14 +2046,15 @@
   function looksLikeResponseInsteadOfPrompt(text) {
     return /^(I |I'll |I can |I cannot |I'm |I am |As an AI|Sure,|Here's|Okay,|Great question)/i.test(text.trim());
   }
+  var tt = (key, subs, fallback) => window.PFI18n ? window.PFI18n.t(key, subs || null, fallback) : fallback;
   function _toast(msg, type = "info", duration = 2500) {
-    const t = createEl("div", {}, [msg]);
-    t.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:8px;font-size:13px;z-index:100001;color:#fff;transition:opacity 0.2s;";
-    t.style.backgroundColor = type === "error" ? "#dc3545" : type === "success" ? "#198754" : "#1a73e8";
-    document.body.appendChild(t);
+    const t2 = createEl("div", {}, [msg]);
+    t2.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:8px;font-size:13px;z-index:100001;color:#fff;transition:opacity 0.2s;";
+    t2.style.backgroundColor = type === "error" ? "#dc3545" : type === "success" ? "#198754" : "#1a73e8";
+    document.body.appendChild(t2);
     setTimeout(() => {
-      t.style.opacity = "0";
-      setTimeout(() => t.remove(), 200);
+      t2.style.opacity = "0";
+      setTimeout(() => t2.remove(), 200);
     }, duration);
   }
   async function improvePrompt(promptUuid, listEl) {
@@ -2155,12 +2067,12 @@
       let improving = true;
       const statusDiv = createEl("div", { className: "opm-improving-status" });
       statusDiv.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;display:flex;align-items:center;gap:8px;";
-      const statusLabel = createEl("span", {}, ["Improving\u2026"]);
+      const statusLabel = createEl("span", {}, [tt("panel_improving", null, "Improving\u2026")]);
       const stopButton = createEl("button");
       stopButton.style.cssText = "background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;";
-      stopButton.textContent = "Stop";
+      stopButton.textContent = tt("panel_stop", null, "Stop");
       statusDiv.append(statusLabel, stopButton);
-      const stream = ollamaStream({ op: "improve", promptText: original });
+      const stream = ollamaStream({ op: "improve", promptText: original, language: prompt.language });
       stopButton.addEventListener("click", () => {
         improving = false;
         stream.cancel();
@@ -2184,12 +2096,12 @@
         await PromptStorageManager.addVersion(promptUuid, buffer, "ai_improvement");
         await PromptStorageManager._ps().then((ps) => ps.updatePrompt(promptUuid, { content: buffer }));
         if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
-        _toast("Prompt improved!", "success");
+        _toast(tt("panel_improved", null, "Prompt improved!"), "success");
       }
     } catch (e) {
       if (!/abort/i.test(e.message || "")) {
         console.error("Improve failed:", e);
-        _toast("Improvement failed: " + e.message, "error");
+        _toast(tt("panel_improve_failed", [e.message], "Improvement failed: " + e.message), "error");
       }
     }
   }
@@ -2200,11 +2112,11 @@
       if (!prompt) return;
       const statusDiv = createEl("div", { className: "opm-improving-status" });
       statusDiv.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;";
-      statusDiv.textContent = "Generating variants\u2026";
+      statusDiv.textContent = tt("panel_generating", null, "Generating variants\u2026");
       document.body.appendChild(statusDiv);
       let variants = [];
       try {
-        variants = await ollamaRPC({ op: "variants", promptText: prompt.content, count: 3 });
+        variants = await ollamaRPC({ op: "variants", promptText: prompt.content, count: 3, language: prompt.language });
       } finally {
         statusDiv.remove();
       }
@@ -2214,11 +2126,55 @@
           await PromptStorageManager.addVersion(promptUuid, variants[i], "ai_variant", { variantGroup: g, variantIndex: i + 1 });
         }
         if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
-        _toast(`Generated ${variants.length} variants!`, "success");
+        _toast(tt("panel_variants_generated", [String(variants.length)], `Generated ${variants.length} variants!`), "success");
       }
     } catch (e) {
       console.error("Variants failed:", e);
-      _toast("Variant generation failed: " + e.message, "error");
+      _toast(tt("panel_variants_failed", [e.message], "Variant generation failed: " + e.message), "error");
+    }
+  }
+  async function translatePrompt(promptUuid, toLang, listEl) {
+    try {
+      const prompts = await PromptStorageManager.getPrompts();
+      const prompt = prompts.find((p) => p.uuid === promptUuid);
+      if (!prompt || !toLang) return;
+      const fromLang = prompt.language || null;
+      const targetLabel = window.PFLanguage && window.PFLanguage.languageMeta(toLang).label || toLang;
+      let buffer = "";
+      let running = true;
+      const statusDiv = createEl("div", { className: "opm-improving-status" });
+      statusDiv.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;display:flex;align-items:center;gap:8px;";
+      statusDiv.appendChild(createEl("span", {}, [tt("panel_translating", null, "Translating\u2026")]));
+      const stopButton = createEl("button");
+      stopButton.style.cssText = "background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;";
+      stopButton.textContent = tt("panel_stop", null, "Stop");
+      statusDiv.appendChild(stopButton);
+      const stream = ollamaStream({ op: "translate", promptText: prompt.content, toLang, fromLang });
+      stopButton.addEventListener("click", () => {
+        running = false;
+        stream.cancel();
+        statusDiv.remove();
+      });
+      document.body.appendChild(statusDiv);
+      try {
+        for await (const chunk of stream) {
+          if (!running) break;
+          buffer += chunk;
+        }
+      } finally {
+        statusDiv.remove();
+      }
+      if (!running || !buffer.trim()) return;
+      buffer = buffer.trim();
+      await PromptStorageManager.addVersion(promptUuid, buffer, "ai_translation", { from: fromLang, to: toLang });
+      await PromptStorageManager._ps().then((ps) => ps.updatePrompt(promptUuid, { content: buffer, language: toLang }));
+      if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+      _toast(tt("panel_translated", [targetLabel], `Translated to ${targetLabel}`), "success");
+    } catch (e) {
+      if (!/abort/i.test(e.message || "")) {
+        console.error("Translate failed:", e);
+        _toast(tt("toast_translate_failed", [e.message], "Translation failed: " + e.message), "error");
+      }
     }
   }
   async function autoSuggestMetadata(promptUuid, listEl) {
@@ -2228,7 +2184,7 @@
       if (!prompt) return;
       const data = await chrome.storage.local.get({ autoSuggestMetadata: true });
       if (!data.autoSuggestMetadata) return;
-      const metadata = await ollamaRPC({ op: "suggest", promptText: prompt.content });
+      const metadata = await ollamaRPC({ op: "suggest", promptText: prompt.content, language: prompt.language });
       const updates = {};
       if ((!prompt.title || prompt.title === "Untitled Prompt") && metadata.title && metadata.title !== "Untitled Prompt") {
         updates.title = metadata.title;
@@ -2237,7 +2193,7 @@
         updates.category = metadata.category;
       }
       if (!Array.isArray(prompt.tags) || prompt.tags.length === 0) {
-        const filteredTags = (metadata.tags || []).filter((t) => t !== "untagged");
+        const filteredTags = (metadata.tags || []).filter((t2) => t2 !== "untagged");
         if (filteredTags.length > 0) updates.tags = filteredTags;
       }
       if (Object.keys(updates).length > 0) {
@@ -2249,9 +2205,1428 @@
       console.warn("Auto-suggest failed:", e);
     }
   }
-  window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata };
+  window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata, translatePrompt };
+
+  // language.js
+  var SUPPORTED_LANGUAGES = Object.freeze([
+    Object.freeze({ code: "en", label: "English", short: "EN" }),
+    Object.freeze({ code: "zh-HK", label: "\u4E2D\u6587\uFF08\u7E41\u9AD4\uFF09", short: "\u7E41" }),
+    Object.freeze({ code: "zh-CN", label: "\u4E2D\u6587\uFF08\u7B80\u4F53\uFF09", short: "\u7B80" })
+  ]);
+  var DEFAULT_PROMPT_LANGUAGES = Object.freeze(["en", "zh-HK", "zh-CN"]);
+  var LANGUAGE_NAMES = Object.freeze({
+    "en": "English",
+    "zh-HK": "Traditional Chinese",
+    "zh-CN": "Simplified Chinese"
+  });
+  function normalizeLangCode(raw) {
+    if (typeof raw !== "string") return null;
+    const parts = raw.trim().split(/[-_]/).filter(Boolean);
+    if (parts.length === 0) return null;
+    const primary = parts[0].toLowerCase();
+    if (!/^[a-z]{2,3}$/.test(primary)) return null;
+    if (parts.length === 1) return primary;
+    const region = parts[1].toUpperCase();
+    if (!/^[A-Z]{2}$/.test(region)) return primary;
+    return `${primary}-${region}`;
+  }
+  function languageMeta(code) {
+    const normalized = normalizeLangCode(code);
+    return SUPPORTED_LANGUAGES.find((l) => l.code === normalized) || { code: normalized || code, label: normalized || String(code), short: (normalized || String(code)).toUpperCase() };
+  }
+  var SIMP_TRAD_PAIRS = [
+    ["\u4E07", "\u842C"],
+    ["\u4E0E", "\u8207"],
+    ["\u4E13", "\u5C08"],
+    ["\u4E1A", "\u696D"],
+    ["\u4E1C", "\u6771"],
+    ["\u4E1D", "\u7D72"],
+    ["\u4E24", "\u5169"],
+    ["\u4E25", "\u56B4"],
+    ["\u4E2A", "\u500B"],
+    ["\u4E30", "\u8C50"],
+    ["\u4E34", "\u81E8"],
+    ["\u4E3A", "\u70BA"],
+    ["\u4E3E", "\u8209"],
+    ["\u4E49", "\u7FA9"],
+    ["\u4E50", "\u6A02"],
+    ["\u4E60", "\u7FD2"],
+    ["\u4E61", "\u9109"],
+    ["\u4E66", "\u66F8"],
+    ["\u4E70", "\u8CB7"],
+    ["\u4E71", "\u4E82"],
+    ["\u4E89", "\u722D"],
+    ["\u4E8E", "\u65BC"],
+    ["\u4E91", "\u96F2"],
+    ["\u4EA7", "\u7522"],
+    ["\u4EB2", "\u89AA"],
+    ["\u4EBF", "\u5104"],
+    ["\u4EC5", "\u50C5"],
+    ["\u4ECE", "\u5F9E"],
+    ["\u4ED3", "\u5009"],
+    ["\u4EEA", "\u5100"],
+    ["\u4EEC", "\u5011"],
+    ["\u4EF7", "\u50F9"],
+    ["\u4F17", "\u773E"],
+    ["\u4F18", "\u512A"],
+    ["\u4F1A", "\u6703"],
+    ["\u4F1F", "\u5049"],
+    ["\u4F20", "\u50B3"],
+    ["\u4F24", "\u50B7"],
+    ["\u4F53", "\u9AD4"],
+    ["\u4F63", "\u50AD"],
+    ["\u6765", "\u4F86"],
+    ["\u4FA6", "\u5075"],
+    ["\u4FA7", "\u5074"],
+    ["\u4FA8", "\u50D1"],
+    ["\u4FE9", "\u5006"],
+    ["\u4FED", "\u5109"],
+    ["\u503A", "\u50B5"],
+    ["\u503E", "\u50BE"],
+    ["\u507F", "\u511F"],
+    ["\u50A8", "\u5132"],
+    ["\u513F", "\u5152"],
+    ["\u5151", "\u514C"],
+    ["\u5170", "\u862D"],
+    ["\u5173", "\u95DC"],
+    ["\u5174", "\u8208"],
+    ["\u517B", "\u990A"],
+    ["\u5185", "\u5167"],
+    ["\u5188", "\u5CA1"],
+    ["\u518C", "\u518A"],
+    ["\u5199", "\u5BEB"],
+    ["\u519B", "\u8ECD"],
+    ["\u519C", "\u8FB2"],
+    ["\u51AF", "\u99AE"],
+    ["\u51B2", "\u6C96"],
+    ["\u51B3", "\u6C7A"],
+    ["\u51B5", "\u6CC1"],
+    ["\u51BB", "\u51CD"],
+    ["\u51C0", "\u6DE8"],
+    ["\u51C9", "\u6DBC"],
+    ["\u51CF", "\u6E1B"],
+    ["\u51E0", "\u5E7E"],
+    ["\u51E4", "\u9CF3"],
+    ["\u51ED", "\u6191"],
+    ["\u51EF", "\u51F1"],
+    ["\u51FB", "\u64CA"],
+    ["\u51FF", "\u947F"],
+    ["\u5218", "\u5289"],
+    ["\u5219", "\u5247"],
+    ["\u521A", "\u525B"],
+    ["\u521B", "\u5275"],
+    ["\u5220", "\u522A"],
+    ["\u522B", "\u5225"],
+    ["\u5251", "\u528D"],
+    ["\u5267", "\u5287"],
+    ["\u529D", "\u52F8"],
+    ["\u529E", "\u8FA6"],
+    ["\u52A1", "\u52D9"],
+    ["\u52A8", "\u52D5"],
+    ["\u52B1", "\u52F5"],
+    ["\u52B2", "\u52C1"],
+    ["\u52B3", "\u52DE"],
+    ["\u52BF", "\u52E2"],
+    ["\u52CB", "\u52DB"],
+    ["\u5300", "\u52FB"],
+    ["\u533A", "\u5340"],
+    ["\u533B", "\u91AB"],
+    ["\u534E", "\u83EF"],
+    ["\u534F", "\u5354"],
+    ["\u5355", "\u55AE"],
+    ["\u5356", "\u8CE3"],
+    ["\u536B", "\u885B"],
+    ["\u5374", "\u537B"],
+    ["\u5382", "\u5EE0"],
+    ["\u5385", "\u5EF3"],
+    ["\u5386", "\u6B77"],
+    ["\u5389", "\u53B2"],
+    ["\u538B", "\u58D3"],
+    ["\u538C", "\u53AD"],
+    ["\u5395", "\u5EC1"],
+    ["\u53A2", "\u5EC2"],
+    ["\u53A6", "\u5EC8"],
+    ["\u53A8", "\u5EDA"],
+    ["\u53BF", "\u7E23"],
+    ["\u53CC", "\u96D9"],
+    ["\u53D1", "\u767C"],
+    ["\u53D8", "\u8B8A"],
+    ["\u53D9", "\u6558"],
+    ["\u53E0", "\u758A"],
+    ["\u53F6", "\u8449"],
+    ["\u53F7", "\u865F"],
+    ["\u53F9", "\u5606"],
+    ["\u540E", "\u5F8C"],
+    ["\u5413", "\u5687"],
+    ["\u5415", "\u5442"],
+    ["\u5417", "\u55CE"],
+    ["\u5428", "\u5678"],
+    ["\u542C", "\u807D"],
+    ["\u542F", "\u555F"],
+    ["\u5434", "\u5433"],
+    ["\u5455", "\u5614"],
+    ["\u5458", "\u54E1"],
+    ["\u545B", "\u55C6"],
+    ["\u545C", "\u55DA"],
+    ["\u5499", "\u56A8"],
+    ["\u54CD", "\u97FF"],
+    ["\u54D1", "\u555E"],
+    ["\u54D7", "\u5629"],
+    ["\u54DF", "\u55B2"],
+    ["\u5520", "\u562E"],
+    ["\u5524", "\u559A"],
+    ["\u5567", "\u5616"],
+    ["\u556E", "\u5699"],
+    ["\u5570", "\u56C9"],
+    ["\u5578", "\u562F"],
+    ["\u55B7", "\u5674"],
+    ["\u55BD", "\u560D"],
+    ["\u55EB", "\u56C1"],
+    ["\u6151", "\u61FE"],
+    ["\u61D2", "\u61F6"],
+    ["\u620F", "\u6232"],
+    ["\u6218", "\u6230"],
+    ["\u6237", "\u6236"],
+    ["\u626A", "\u636B"],
+    ["\u626B", "\u6383"],
+    ["\u626C", "\u63DA"],
+    ["\u6270", "\u64FE"],
+    ["\u629A", "\u64AB"],
+    ["\u629B", "\u62CB"],
+    ["\u62E3", "\u63C0"],
+    ["\u62E5", "\u64C1"],
+    ["\u62E6", "\u6514"],
+    ["\u62E7", "\u64F0"],
+    ["\u62E8", "\u64A5"],
+    ["\u62E9", "\u64C7"],
+    ["\u6302", "\u639B"],
+    ["\u631A", "\u646F"],
+    ["\u631B", "\u6523"],
+    ["\u631D", "\u64BE"],
+    ["\u631E", "\u64BB"],
+    ["\u631F", "\u633E"],
+    ["\u6320", "\u6493"],
+    ["\u6321", "\u64CB"],
+    ["\u6323", "\u6399"],
+    ["\u6324", "\u64E0"],
+    ["\u6325", "\u63EE"],
+    ["\u635E", "\u6488"],
+    ["\u635F", "\u640D"],
+    ["\u6361", "\u64BF"],
+    ["\u6362", "\u63DB"],
+    ["\u6363", "\u6417"],
+    ["\u636E", "\u64DA"],
+    ["\u63B3", "\u64C4"],
+    ["\u63B7", "\u64F2"],
+    ["\u63B8", "\u64A3"],
+    ["\u63BA", "\u647B"],
+    ["\u63FD", "\u652C"],
+    ["\u65A9", "\u65AC"],
+    ["\u65AD", "\u65B7"],
+    ["\u65E0", "\u7121"],
+    ["\u65E7", "\u820A"],
+    ["\u65F6", "\u6642"],
+    ["\u65F7", "\u66E0"],
+    ["\u6619", "\u66C7"],
+    ["\u663C", "\u665D"],
+    ["\u663E", "\u986F"],
+    ["\u664B", "\u6649"],
+    ["\u6652", "\u66EC"],
+    ["\u6653", "\u66C9"],
+    ["\u6655", "\u6688"],
+    ["\u6656", "\u6689"],
+    ["\u6682", "\u66AB"],
+    ["\u672F", "\u8853"],
+    ["\u6734", "\u6A38"],
+    ["\u673A", "\u6A5F"],
+    ["\u6740", "\u6BBA"],
+    ["\u6742", "\u96DC"],
+    ["\u6743", "\u6B0A"],
+    ["\u6746", "\u687F"],
+    ["\u6761", "\u689D"],
+    ["\u6768", "\u694A"],
+    ["\u6781", "\u6975"],
+    ["\u6784", "\u69CB"],
+    ["\u67A2", "\u6A1E"],
+    ["\u67A3", "\u68D7"],
+    ["\u67AA", "\u69CD"],
+    ["\u67AB", "\u6953"],
+    ["\u67E0", "\u6AB8"],
+    ["\u6805", "\u67F5"],
+    ["\u6807", "\u6A19"],
+    ["\u6808", "\u68E7"],
+    ["\u680B", "\u68DF"],
+    ["\u680F", "\u6B04"],
+    ["\u6811", "\u6A39"],
+    ["\u6837", "\u6A23"],
+    ["\u6863", "\u6A94"],
+    ["\u6865", "\u6A4B"],
+    ["\u6866", "\u6A3A"],
+    ["\u6868", "\u69F3"],
+    ["\u6869", "\u6A01"],
+    ["\u68A6", "\u5922"],
+    ["\u68C0", "\u6AA2"],
+    ["\u697C", "\u6A13"],
+    ["\u692D", "\u6A62"],
+    ["\u6A2A", "\u6A6B"],
+    ["\u6A31", "\u6AFB"],
+    ["\u6A71", "\u6AE5"],
+    ["\u6B22", "\u6B61"],
+    ["\u6B27", "\u6B50"],
+    ["\u6B7C", "\u6BB2"],
+    ["\u6B87", "\u6BA4"],
+    ["\u6B8B", "\u6B98"],
+    ["\u6BD9", "\u6583"],
+    ["\u6BE1", "\u6C08"],
+    ["\u6C14", "\u6C23"],
+    ["\u6C22", "\u6C2B"],
+    ["\u6C47", "\u532F"],
+    ["\u6C49", "\u6F22"],
+    ["\u6C64", "\u6E6F"],
+    ["\u6C9F", "\u6E9D"],
+    ["\u6CA1", "\u6C92"],
+    ["\u6CA5", "\u701D"],
+    ["\u6CA6", "\u6DEA"],
+    ["\u6CA7", "\u6EC4"],
+    ["\u6CAA", "\u6EEC"],
+    ["\u6CDE", "\u6FD8"],
+    ["\u6CEA", "\u6DDA"],
+    ["\u6CF7", "\u7027"],
+    ["\u6CF8", "\u7018"],
+    ["\u6CFB", "\u7009"],
+    ["\u6CFC", "\u6F51"],
+    ["\u6CFD", "\u6FA4"],
+    ["\u6CFE", "\u6D87"],
+    ["\u6D01", "\u6F54"],
+    ["\u6D12", "\u7051"],
+    ["\u6D45", "\u6DFA"],
+    ["\u6D46", "\u6F3F"],
+    ["\u6D47", "\u6F86"],
+    ["\u6D4A", "\u6FC1"],
+    ["\u6D4B", "\u6E2C"],
+    ["\u6D4E", "\u6FDF"],
+    ["\u6D4F", "\u700F"],
+    ["\u6D51", "\u6E3E"],
+    ["\u6D52", "\u6EF8"],
+    ["\u6D53", "\u6FC3"],
+    ["\u6D54", "\u6F6F"],
+    ["\u6DA9", "\u6F80"],
+    ["\u6E0A", "\u6DF5"],
+    ["\u6E0D", "\u6F2C"],
+    ["\u6E0E", "\u7006"],
+    ["\u6E10", "\u6F38"],
+    ["\u6E14", "\u6F01"],
+    ["\u6E17", "\u6EF2"],
+    ["\u6E29", "\u6EAB"],
+    ["\u6E7E", "\u7063"],
+    ["\u6E7F", "\u6FD5"],
+    ["\u6E83", "\u6F70"],
+    ["\u6E85", "\u6FFA"],
+    ["\u6EE5", "\u6FEB"],
+    ["\u6EE8", "\u6FF1"],
+    ["\u6EE9", "\u7058"],
+    ["\u6EE4", "\u6FFE"],
+    ["\u6EDA", "\u6EFE"],
+    ["\u6EDE", "\u6EEF"],
+    ["\u6EE1", "\u6EFF"],
+    ["\u6F4B", "\u7032"],
+    ["\u6F4D", "\u6FF0"],
+    ["\u6F5C", "\u6F5B"],
+    ["\u6F9C", "\u703E"],
+    ["\u6FD2", "\u7015"],
+    ["\u706D", "\u6EC5"],
+    ["\u706F", "\u71C8"],
+    ["\u7075", "\u9748"],
+    ["\u707E", "\u707D"],
+    ["\u707F", "\u71E6"],
+    ["\u7089", "\u7210"],
+    ["\u7096", "\u71C9"],
+    ["\u709C", "\u7152"],
+    ["\u70B9", "\u9EDE"],
+    ["\u70BC", "\u7149"],
+    ["\u70BD", "\u71BE"],
+    ["\u70C1", "\u720D"],
+    ["\u70C2", "\u721B"],
+    ["\u70C3", "\u70F4"],
+    ["\u70DB", "\u71ED"],
+    ["\u70E8", "\u71C1"],
+    ["\u70E9", "\u71F4"],
+    ["\u70EB", "\u71D9"],
+    ["\u70EC", "\u71FC"],
+    ["\u70ED", "\u71B1"],
+    ["\u7115", "\u7165"],
+    ["\u7116", "\u71DC"],
+    ["\u7231", "\u611B"],
+    ["\u7237", "\u723A"],
+    ["\u724D", "\u7258"],
+    ["\u7275", "\u727D"],
+    ["\u727A", "\u72A7"],
+    ["\u728A", "\u72A2"],
+    ["\u72B6", "\u72C0"],
+    ["\u72B9", "\u7336"],
+    ["\u72C8", "\u72FD"],
+    ["\u72DE", "\u7370"],
+    ["\u72EC", "\u7368"],
+    ["\u72ED", "\u72F9"],
+    ["\u72EE", "\u7345"],
+    ["\u72F0", "\u7319"],
+    ["\u72F1", "\u7344"],
+    ["\u7315", "\u737C"],
+    ["\u732A", "\u8C6C"],
+    ["\u732B", "\u8C93"],
+    ["\u732E", "\u737B"],
+    ["\u736D", "\u737A"],
+    ["\u7391", "\u74A3"],
+    ["\u739B", "\u746A"],
+    ["\u73AE", "\u744B"],
+    ["\u73AF", "\u74B0"],
+    ["\u73B0", "\u73FE"],
+    ["\u73BA", "\u74BD"],
+    ["\u73D1", "\u74CF"],
+    ["\u73F2", "\u743F"],
+    ["\u7410", "\u7463"],
+    ["\u743C", "\u74CA"],
+    ["\u7477", "\u74A6"],
+    ["\u748E", "\u74D4"],
+    ["\u74D2", "\u74DA"],
+    ["\u7535", "\u96FB"],
+    ["\u753B", "\u756B"],
+    ["\u7545", "\u66A2"],
+    ["\u7574", "\u7587"],
+    ["\u7596", "\u7664"],
+    ["\u7597", "\u7642"],
+    ["\u759F", "\u7627"],
+    ["\u75A1", "\u760D"],
+    ["\u75AE", "\u7621"],
+    ["\u75AF", "\u760B"],
+    ["\u75B1", "\u76B0"],
+    ["\u75C8", "\u7670"],
+    ["\u75C9", "\u75D9"],
+    ["\u75D2", "\u7662"],
+    ["\u75EA", "\u7613"],
+    ["\u75EB", "\u7647"],
+    ["\u7618", "\u763B"],
+    ["\u762B", "\u7671"],
+    ["\u763E", "\u766E"],
+    ["\u765E", "\u7669"],
+    ["\u7663", "\u766C"],
+    ["\u766B", "\u7672"],
+    ["\u7691", "\u769A"],
+    ["\u76B1", "\u76BA"],
+    ["\u76CF", "\u76DE"],
+    ["\u76D0", "\u9E7D"],
+    ["\u76D1", "\u76E3"],
+    ["\u76D8", "\u76E4"],
+    ["\u7741", "\u775C"],
+    ["\u7750", "\u775E"],
+    ["\u7751", "\u77BC"],
+    ["\u7792", "\u779E"],
+    ["\u77A9", "\u77DA"],
+    ["\u77EB", "\u77EF"],
+    ["\u77F6", "\u78EF"],
+    ["\u77FE", "\u792C"],
+    ["\u77FF", "\u7926"],
+    ["\u7801", "\u78BC"],
+    ["\u7816", "\u78DA"],
+    ["\u781A", "\u786F"],
+    ["\u783A", "\u792A"],
+    ["\u783E", "\u792B"],
+    ["\u7840", "\u790E"],
+    ["\u7855", "\u78A9"],
+    ["\u786E", "\u78BA"],
+    ["\u788D", "\u7919"],
+    ["\u793C", "\u79AE"],
+    ["\u794E", "\u7995"],
+    ["\u796F", "\u798E"],
+    ["\u7977", "\u79B1"],
+    ["\u7978", "\u798D"],
+    ["\u7985", "\u79AA"],
+    ["\u79BB", "\u96E2"],
+    ["\u79C3", "\u79BF"],
+    ["\u79C6", "\u7A08"],
+    ["\u7A0E", "\u7A05"],
+    ["\u7A23", "\u7A4C"],
+    ["\u7A33", "\u7A69"],
+    ["\u7A51", "\u7A61"],
+    ["\u7A77", "\u7AAE"],
+    ["\u7A83", "\u7ACA"],
+    ["\u7A8D", "\u7AC5"],
+    ["\u7A91", "\u7AAF"],
+    ["\u7A9C", "\u7AC4"],
+    ["\u7A9D", "\u7AA9"],
+    ["\u7AA5", "\u7ABA"],
+    ["\u7AA6", "\u7AC7"],
+    ["\u7AD6", "\u8C4E"],
+    ["\u7ADE", "\u7AF6"],
+    ["\u7B03", "\u7BE4"],
+    ["\u7B14", "\u7B46"],
+    ["\u7B3A", "\u7B8B"],
+    ["\u7B3C", "\u7C60"],
+    ["\u7B5B", "\u7BE9"],
+    ["\u7B5D", "\u7B8F"],
+    ["\u7B79", "\u7C4C"],
+    ["\u7B7E", "\u7C64"],
+    ["\u7B80", "\u7C21"],
+    ["\u7BA7", "\u7BCB"],
+    ["\u7BA9", "\u7C6E"],
+    ["\u7BAA", "\u7C1E"],
+    ["\u7BAB", "\u7C2B"],
+    ["\u7BD3", "\u7C0D"],
+    ["\u7BEE", "\u7C43"],
+    ["\u7C7B", "\u985E"],
+    ["\u7C9C", "\u7CF6"],
+    ["\u7CAA", "\u7CDE"],
+    ["\u7CAE", "\u7CE7"],
+    ["\u7D27", "\u7DCA"],
+    ["\u7EA0", "\u7CFE"],
+    ["\u7EA2", "\u7D05"],
+    ["\u7EA4", "\u7E96"],
+    ["\u7EA6", "\u7D04"],
+    ["\u7EA7", "\u7D1A"],
+    ["\u7EAA", "\u7D00"],
+    ["\u7EAB", "\u7D09"],
+    ["\u7EAC", "\u7DEF"],
+    ["\u7EAF", "\u7D14"],
+    ["\u7EB1", "\u7D17"],
+    ["\u7EB2", "\u7DB1"],
+    ["\u7EB3", "\u7D0D"],
+    ["\u7EB5", "\u7E31"],
+    ["\u7EB6", "\u7DB8"],
+    ["\u7EB7", "\u7D1B"],
+    ["\u7EB8", "\u7D19"],
+    ["\u7EB9", "\u7D0B"],
+    ["\u7EBA", "\u7D21"],
+    ["\u7EBD", "\u7D10"],
+    ["\u7EBF", "\u7DDA"],
+    ["\u7EC3", "\u7DF4"],
+    ["\u7EC4", "\u7D44"],
+    ["\u7EC5", "\u7D33"],
+    ["\u7EC6", "\u7D30"],
+    ["\u7EC7", "\u7E54"],
+    ["\u7EC8", "\u7D42"],
+    ["\u7ECA", "\u7D46"],
+    ["\u7ECD", "\u7D39"],
+    ["\u7ECE", "\u7E79"],
+    ["\u7ECF", "\u7D93"],
+    ["\u7ED1", "\u7D81"],
+    ["\u7ED2", "\u7D68"],
+    ["\u7ED3", "\u7D50"],
+    ["\u7ED5", "\u7E5E"],
+    ["\u7ED8", "\u7E6A"],
+    ["\u7ED9", "\u7D66"],
+    ["\u7EDA", "\u7D62"],
+    ["\u7EDC", "\u7D61"],
+    ["\u7EDD", "\u7D55"],
+    ["\u7EDE", "\u7D5E"],
+    ["\u7EDF", "\u7D71"],
+    ["\u7EE3", "\u7E61"],
+    ["\u7EE5", "\u7D8F"],
+    ["\u7EE7", "\u7E7C"],
+    ["\u7EE9", "\u7E3E"],
+    ["\u7EEA", "\u7DD2"],
+    ["\u7EED", "\u7E8C"],
+    ["\u7EEE", "\u7DBA"],
+    ["\u7EEF", "\u7DCB"],
+    ["\u7EF0", "\u7DBD"],
+    ["\u7EF3", "\u7E69"],
+    ["\u7EF4", "\u7DAD"],
+    ["\u7EF5", "\u7DBF"],
+    ["\u7EF7", "\u7E43"],
+    ["\u7EF8", "\u7DA2"],
+    ["\u7EFC", "\u7D9C"],
+    ["\u7EFD", "\u7DBB"],
+    ["\u7EFF", "\u7DA0"],
+    ["\u7F00", "\u7DB4"],
+    ["\u7F04", "\u7DD8"],
+    ["\u7F05", "\u7DEC"],
+    ["\u7F06", "\u7E9C"],
+    ["\u7F09", "\u7DDD"],
+    ["\u7F0E", "\u7DDE"],
+    ["\u7F16", "\u7DE8"],
+    ["\u7F18", "\u7DE3"],
+    ["\u7F1A", "\u7E1B"],
+    ["\u7F1D", "\u7E2B"],
+    ["\u7F20", "\u7E8F"],
+    ["\u7F24", "\u7E7D"],
+    ["\u7F25", "\u7E39"],
+    ["\u7F28", "\u7E93"],
+    ["\u7F29", "\u7E2E"],
+    ["\u7F2A", "\u7E46"],
+    ["\u7F2D", "\u7E5A"],
+    ["\u7F2E", "\u7E55"],
+    ["\u7F30", "\u7E6E"],
+    ["\u7F34", "\u7E73"],
+    ["\u7F51", "\u7DB2"],
+    ["\u7F57", "\u7F85"],
+    ["\u7F5A", "\u7F70"],
+    ["\u7F62", "\u7F77"],
+    ["\u7F81", "\u7F88"],
+    ["\u8038", "\u8073"],
+    ["\u803B", "\u6065"],
+    ["\u8042", "\u8076"],
+    ["\u804B", "\u807E"],
+    ["\u804C", "\u8077"],
+    ["\u8054", "\u806F"],
+    ["\u8069", "\u8075"],
+    ["\u806A", "\u8070"],
+    ["\u8083", "\u8085"],
+    ["\u80A0", "\u8178"],
+    ["\u80A4", "\u819A"],
+    ["\u80BE", "\u814E"],
+    ["\u80BF", "\u816B"],
+    ["\u80C0", "\u8139"],
+    ["\u80C1", "\u8105"],
+    ["\u80C6", "\u81BD"],
+    ["\u80DC", "\u52DD"],
+    ["\u80E7", "\u6727"],
+    ["\u80F6", "\u81A0"],
+    ["\u8109", "\u8108"],
+    ["\u810D", "\u81BE"],
+    ["\u810F", "\u81DF"],
+    ["\u8110", "\u81CD"],
+    ["\u8111", "\u8166"],
+    ["\u8113", "\u81BF"],
+    ["\u811A", "\u8173"],
+    ["\u8138", "\u81C9"],
+    ["\u814A", "\u81D8"],
+    ["\u817B", "\u81A9"],
+    ["\u817E", "\u9A30"],
+    ["\u8206", "\u8F3F"],
+    ["\u8230", "\u8266"],
+    ["\u8231", "\u8259"],
+    ["\u8270", "\u8271"],
+    ["\u8273", "\u8277"],
+    ["\u827A", "\u85DD"],
+    ["\u829C", "\u856A"],
+    ["\u82A6", "\u8606"],
+    ["\u82C7", "\u8466"],
+    ["\u82CB", "\u83A7"],
+    ["\u82CD", "\u84BC"],
+    ["\u82CF", "\u8607"],
+    ["\u830E", "\u8396"],
+    ["\u8327", "\u7E6D"],
+    ["\u8346", "\u834A"],
+    ["\u8350", "\u85A6"],
+    ["\u835A", "\u83A2"],
+    ["\u835E", "\u854E"],
+    ["\u835F", "\u8588"],
+    ["\u8360", "\u85BA"],
+    ["\u8363", "\u69AE"],
+    ["\u8364", "\u8477"],
+    ["\u8365", "\u6ECE"],
+    ["\u8366", "\u7296"],
+    ["\u8367", "\u7192"],
+    ["\u8368", "\u8541"],
+    ["\u836A", "\u84C0"],
+    ["\u836B", "\u852D"],
+    ["\u836F", "\u85E5"],
+    ["\u83B1", "\u840A"],
+    ["\u83B2", "\u84EE"],
+    ["\u83B3", "\u8494"],
+    ["\u83B4", "\u8435"],
+    ["\u83B7", "\u7372"],
+    ["\u83B9", "\u7469"],
+    ["\u83BA", "\u9DAF"],
+    ["\u841D", "\u863F"],
+    ["\u8424", "\u87A2"],
+    ["\u8425", "\u71DF"],
+    ["\u8426", "\u7E08"],
+    ["\u8427", "\u856D"],
+    ["\u8428", "\u85A9"],
+    ["\u8489", "\u8562"],
+    ["\u848B", "\u8523"],
+    ["\u84DD", "\u85CD"],
+    ["\u84DF", "\u858A"],
+    ["\u84E3", "\u8577"],
+    ["\u84E6", "\u9A40"],
+    ["\u8537", "\u8594"],
+    ["\u853A", "\u85FA"],
+    ["\u853C", "\u85F9"],
+    ["\u8572", "\u8604"],
+    ["\u8574", "\u860A"],
+    ["\u85AE", "\u85EA"],
+    ["\u85D3", "\u861A"],
+    ["\u864F", "\u865C"],
+    ["\u8651", "\u616E"],
+    ["\u865A", "\u865B"],
+    ["\u866C", "\u866F"],
+    ["\u867D", "\u96D6"],
+    ["\u867E", "\u8766"],
+    ["\u8680", "\u8755"],
+    ["\u8681", "\u87FB"],
+    ["\u8682", "\u879E"],
+    ["\u8695", "\u8836"],
+    ["\u869D", "\u8814"],
+    ["\u86AC", "\u8706"],
+    ["\u86CA", "\u8831"],
+    ["\u86CE", "\u8823"],
+    ["\u86CF", "\u87F6"],
+    ["\u86EE", "\u883B"],
+    ["\u86F0", "\u87C4"],
+    ["\u86F1", "\u86FA"],
+    ["\u86F2", "\u87EF"],
+    ["\u86F3", "\u8784"],
+    ["\u8715", "\u86FB"],
+    ["\u8717", "\u8778"],
+    ["\u8721", "\u881F"],
+    ["\u8748", "\u87C8"],
+    ["\u877C", "\u87BB"],
+    ["\u877E", "\u8811"],
+    ["\u87A8", "\u87CE"],
+    ["\u8845", "\u91C1"],
+    ["\u8854", "\u929C"],
+    ["\u8865", "\u88DC"],
+    ["\u8884", "\u8956"],
+    ["\u8885", "\u88CA"],
+    ["\u889C", "\u896A"],
+    ["\u88AD", "\u8972"],
+    ["\u88C5", "\u88DD"],
+    ["\u88C6", "\u8960"],
+    ["\u88E4", "\u8932"],
+    ["\u891B", "\u8938"],
+    ["\u8934", "\u8964"],
+    ["\u89C1", "\u898B"],
+    ["\u89C2", "\u89C0"],
+    ["\u89C4", "\u898F"],
+    ["\u89C5", "\u8993"],
+    ["\u89C6", "\u8996"],
+    ["\u89C8", "\u89BD"],
+    ["\u89C9", "\u89BA"],
+    ["\u89CA", "\u89AC"],
+    ["\u89CE", "\u89A6"],
+    ["\u89D0", "\u89B2"],
+    ["\u89D1", "\u89B7"],
+    ["\u89E6", "\u89F8"],
+    ["\u8A89", "\u8B7D"],
+    ["\u8A8A", "\u8B04"],
+    ["\u8BA1", "\u8A08"],
+    ["\u8BA2", "\u8A02"],
+    ["\u8BA3", "\u8A03"],
+    ["\u8BA4", "\u8A8D"],
+    ["\u8BA5", "\u8B4F"],
+    ["\u8BA8", "\u8A0E"],
+    ["\u8BA9", "\u8B93"],
+    ["\u8BAD", "\u8A13"],
+    ["\u8BAE", "\u8B70"],
+    ["\u8BAF", "\u8A0A"],
+    ["\u8BB0", "\u8A18"],
+    ["\u8BB2", "\u8B1B"],
+    ["\u8BB3", "\u8AF1"],
+    ["\u8BB4", "\u8B33"],
+    ["\u8BB6", "\u8A1D"],
+    ["\u8BB8", "\u8A31"],
+    ["\u8BB9", "\u8A1B"],
+    ["\u8BBA", "\u8AD6"],
+    ["\u8BBC", "\u8A1F"],
+    ["\u8BBD", "\u8AF7"],
+    ["\u8BBE", "\u8A2D"],
+    ["\u8BBF", "\u8A2A"],
+    ["\u8BC0", "\u8A23"],
+    ["\u8BC1", "\u8B49"],
+    ["\u8BC4", "\u8A55"],
+    ["\u8BC5", "\u8A5B"],
+    ["\u8BC8", "\u8A50"],
+    ["\u8BC9", "\u8A34"],
+    ["\u8BCD", "\u8A5E"],
+    ["\u8BD5", "\u8A66"],
+    ["\u8BD7", "\u8A69"],
+    ["\u8BD8", "\u8A70"],
+    ["\u8BD9", "\u8A7C"],
+    ["\u8BDA", "\u8AA0"],
+    ["\u8BDB", "\u8A85"],
+    ["\u8BDD", "\u8A71"],
+    ["\u8BDE", "\u8A95"],
+    ["\u8BE1", "\u8A6D"],
+    ["\u8BE2", "\u8A62"],
+    ["\u8BE3", "\u8A63"],
+    ["\u8BE5", "\u8A72"],
+    ["\u8BE6", "\u8A73"],
+    ["\u8BE7", "\u8A6B"],
+    ["\u8BEB", "\u8AA1"],
+    ["\u8BEC", "\u8AA3"],
+    ["\u8BED", "\u8A9E"],
+    ["\u8BEF", "\u8AA4"],
+    ["\u8BF1", "\u8A98"],
+    ["\u8BF2", "\u8AA8"],
+    ["\u8BF4", "\u8AAA"],
+    ["\u8BF5", "\u8AA6"],
+    ["\u8BF7", "\u8ACB"],
+    ["\u8BF8", "\u8AF8"],
+    ["\u8BFA", "\u8AFE"],
+    ["\u8BFB", "\u8B80"],
+    ["\u8BFD", "\u8AB9"],
+    ["\u8BFE", "\u8AB2"],
+    ["\u8C01", "\u8AB0"],
+    ["\u8C03", "\u8ABF"],
+    ["\u8C05", "\u8AD2"],
+    ["\u8C06", "\u8AC4"],
+    ["\u8C08", "\u8AC7"],
+    ["\u8C0A", "\u8ABC"],
+    ["\u8C0B", "\u8B00"],
+    ["\u8C0D", "\u8ADC"],
+    ["\u8C0E", "\u8B0A"],
+    ["\u8C0F", "\u8AEB"],
+    ["\u8C10", "\u8AE7"],
+    ["\u8C11", "\u8B14"],
+    ["\u8C13", "\u8B02"],
+    ["\u8C15", "\u8AED"],
+    ["\u8C1A", "\u8AFA"],
+    ["\u8C1B", "\u8AE6"],
+    ["\u8C1C", "\u8B0E"],
+    ["\u8C22", "\u8B1D"],
+    ["\u8C23", "\u8B20"],
+    ["\u8C24", "\u8B17"],
+    ["\u8C26", "\u8B19"],
+    ["\u8C27", "\u8B10"],
+    ["\u8C28", "\u8B39"],
+    ["\u8C2C", "\u8B2C"],
+    ["\u8C2D", "\u8B5A"],
+    ["\u8C31", "\u8B5C"],
+    ["\u8C32", "\u8B4E"],
+    ["\u8C34", "\u8B74"],
+    ["\u8D1D", "\u8C9D"],
+    ["\u8D1E", "\u8C9E"],
+    ["\u8D1F", "\u8CA0"],
+    ["\u8D21", "\u8CA2"],
+    ["\u8D22", "\u8CA1"],
+    ["\u8D23", "\u8CAC"],
+    ["\u8D24", "\u8CE2"],
+    ["\u8D25", "\u6557"],
+    ["\u8D26", "\u8CEC"],
+    ["\u8D27", "\u8CA8"],
+    ["\u8D28", "\u8CEA"],
+    ["\u8D29", "\u8CA9"],
+    ["\u8D2A", "\u8CAA"],
+    ["\u8D2B", "\u8CA7"],
+    ["\u8D2C", "\u8CB6"],
+    ["\u8D2D", "\u8CFC"],
+    ["\u8D2E", "\u8CAF"],
+    ["\u8D2F", "\u8CAB"],
+    ["\u8D30", "\u8CB3"],
+    ["\u8D31", "\u8CE4"],
+    ["\u8D34", "\u8CBC"],
+    ["\u8D35", "\u8CB4"],
+    ["\u8D37", "\u8CB8"],
+    ["\u8D38", "\u8CBF"],
+    ["\u8D39", "\u8CBB"],
+    ["\u8D3A", "\u8CC0"],
+    ["\u8D3C", "\u8CCA"],
+    ["\u8D3E", "\u8CC8"],
+    ["\u8D3F", "\u8CC4"],
+    ["\u8D41", "\u8CC3"],
+    ["\u8D42", "\u8CC2"],
+    ["\u8D43", "\u8D1C"],
+    ["\u8D44", "\u8CC7"],
+    ["\u8D45", "\u8CC5"],
+    ["\u8D48", "\u8CD1"],
+    ["\u8D4A", "\u8CD2"],
+    ["\u8D4B", "\u8CE6"],
+    ["\u8D4C", "\u8CED"],
+    ["\u8D4E", "\u8D16"],
+    ["\u8D4F", "\u8CDE"],
+    ["\u8D50", "\u8CDC"],
+    ["\u8D54", "\u8CE0"],
+    ["\u8D56", "\u8CF4"],
+    ["\u8D58", "\u8D05"],
+    ["\u8D5A", "\u8CFA"],
+    ["\u8D5B", "\u8CFD"],
+    ["\u8D5E", "\u8D0A"],
+    ["\u8D60", "\u8D08"],
+    ["\u8D61", "\u8D0D"],
+    ["\u8D62", "\u8D0F"],
+    ["\u8D63", "\u8D1B"],
+    ["\u8D75", "\u8D99"],
+    ["\u8D76", "\u8D95"],
+    ["\u8D8B", "\u8DA8"],
+    ["\u8DC3", "\u8E8D"],
+    ["\u8DC4", "\u8E4C"],
+    ["\u8DF5", "\u8E10"],
+    ["\u8DF7", "\u8E7A"],
+    ["\u8DF9", "\u8E9A"],
+    ["\u8DFB", "\u8E8B"],
+    ["\u8E0C", "\u8E8A"],
+    ["\u8E2A", "\u8E64"],
+    ["\u8E2C", "\u8E93"],
+    ["\u8E2F", "\u8E91"],
+    ["\u8E51", "\u8EA1"],
+    ["\u8E52", "\u8E63"],
+    ["\u8E7F", "\u8EA5"],
+    ["\u8E8F", "\u8EAA"],
+    ["\u8EAF", "\u8EC0"],
+    ["\u8F69", "\u8ED2"],
+    ["\u8F6C", "\u8F49"],
+    ["\u8F6D", "\u8EDB"],
+    ["\u8F6E", "\u8F2A"],
+    ["\u8F6F", "\u8EDF"],
+    ["\u8F70", "\u8F5F"],
+    ["\u8F74", "\u8EF8"],
+    ["\u8F76", "\u8EFC"],
+    ["\u8F7B", "\u8F15"],
+    ["\u8F7C", "\u8EFE"],
+    ["\u8F7D", "\u8F09"],
+    ["\u8F7F", "\u8F4E"],
+    ["\u8F83", "\u8F03"],
+    ["\u8F84", "\u8F12"],
+    ["\u8F85", "\u8F14"],
+    ["\u8F86", "\u8F1B"],
+    ["\u8F88", "\u8F29"],
+    ["\u8F89", "\u8F1D"],
+    ["\u8F8D", "\u8F1F"],
+    ["\u8F90", "\u8F3B"],
+    ["\u8F91", "\u8F2F"],
+    ["\u8F93", "\u8F38"],
+    ["\u8F95", "\u8F45"],
+    ["\u8F96", "\u8F44"],
+    ["\u8F97", "\u8F3E"],
+    ["\u8F99", "\u8F4D"],
+    ["\u8F9E", "\u8FAD"],
+    ["\u8FA9", "\u8FAF"],
+    ["\u8FAB", "\u8FAE"],
+    ["\u8FB9", "\u908A"],
+    ["\u8FBD", "\u907C"],
+    ["\u8FBE", "\u9054"],
+    ["\u8FC1", "\u9077"],
+    ["\u8FC7", "\u904E"],
+    ["\u8FC8", "\u9081"],
+    ["\u8FD0", "\u904B"],
+    ["\u8FD8", "\u9084"],
+    ["\u8FD9", "\u9019"],
+    ["\u8FDB", "\u9032"],
+    ["\u8FDC", "\u9060"],
+    ["\u8FDD", "\u9055"],
+    ["\u8FDE", "\u9023"],
+    ["\u8FDF", "\u9072"],
+    ["\u9002", "\u9069"],
+    ["\u9009", "\u9078"],
+    ["\u900A", "\u905C"],
+    ["\u9012", "\u905E"],
+    ["\u903B", "\u908F"],
+    ["\u9057", "\u907A"],
+    ["\u9065", "\u9059"],
+    ["\u9093", "\u9127"],
+    ["\u90AE", "\u90F5"],
+    ["\u90B9", "\u9112"],
+    ["\u90BB", "\u9130"],
+    ["\u90D1", "\u912D"],
+    ["\u90E7", "\u9116"],
+    ["\u90F8", "\u9132"],
+    ["\u915D", "\u919E"],
+    ["\u917F", "\u91C0"],
+    ["\u91CA", "\u91CB"],
+    ["\u9274", "\u9452"],
+    ["\u92AE", "\u947E"],
+    ["\u9488", "\u91DD"],
+    ["\u9489", "\u91D8"],
+    ["\u948A", "\u91D7"],
+    ["\u948E", "\u91FA"],
+    ["\u948F", "\u91E7"],
+    ["\u9493", "\u91E3"],
+    ["\u9497", "\u91F5"],
+    ["\u9499", "\u9223"],
+    ["\u949B", "\u9226"],
+    ["\u949D", "\u920D"],
+    ["\u949E", "\u9214"],
+    ["\u949F", "\u9418"],
+    ["\u94A0", "\u9209"],
+    ["\u94A2", "\u92FC"],
+    ["\u94A3", "\u9211"],
+    ["\u94A5", "\u9470"],
+    ["\u94A6", "\u6B3D"],
+    ["\u94A7", "\u921E"],
+    ["\u94A8", "\u93A2"],
+    ["\u94A9", "\u9264"],
+    ["\u94AE", "\u9215"],
+    ["\u94AF", "\u9200"],
+    ["\u94B0", "\u923A"],
+    ["\u94B1", "\u9322"],
+    ["\u94B2", "\u9266"],
+    ["\u94B3", "\u9257"],
+    ["\u94B4", "\u9237"],
+    ["\u94B5", "\u7F3D"],
+    ["\u94BB", "\u947D"],
+    ["\u94BC", "\u926C"],
+    ["\u94BE", "\u9240"],
+    ["\u94C0", "\u923E"],
+    ["\u94C1", "\u9435"],
+    ["\u94C2", "\u9251"],
+    ["\u94C3", "\u9234"],
+    ["\u94C5", "\u925B"],
+    ["\u94C6", "\u925A"],
+    ["\u94C9", "\u9249"],
+    ["\u94CB", "\u924D"],
+    ["\u94CE", "\u9438"],
+    ["\u94D0", "\u92AC"],
+    ["\u94DB", "\u943A"],
+    ["\u94DC", "\u9285"],
+    ["\u94DD", "\u92C1"],
+    ["\u94E0", "\u93A7"],
+    ["\u94E1", "\u9358"],
+    ["\u94E3", "\u9291"],
+    ["\u94E4", "\u92CC"],
+    ["\u94E7", "\u93F5"],
+    ["\u94E8", "\u9293"],
+    ["\u94EC", "\u927B"],
+    ["\u94ED", "\u9298"],
+    ["\u94EE", "\u931A"],
+    ["\u94F0", "\u9278"],
+    ["\u94F2", "\u93DF"],
+    ["\u94F3", "\u9283"],
+    ["\u94F5", "\u92A8"],
+    ["\u94F6", "\u9280"],
+    ["\u94F8", "\u9444"],
+    ["\u94FA", "\u92EA"],
+    ["\u94FE", "\u93C8"],
+    ["\u94FF", "\u93D7"],
+    ["\u9500", "\u92B7"],
+    ["\u9501", "\u9396"],
+    ["\u9502", "\u92F0"],
+    ["\u9504", "\u92E4"],
+    ["\u9505", "\u934B"],
+    ["\u9506", "\u92EF"],
+    ["\u9508", "\u93FD"],
+    ["\u9509", "\u92BC"],
+    ["\u950B", "\u92D2"],
+    ["\u950C", "\u92C5"],
+    ["\u9510", "\u92B3"],
+    ["\u9511", "\u92BB"],
+    ["\u9519", "\u932F"],
+    ["\u951A", "\u9328"],
+    ["\u951F", "\u9315"],
+    ["\u9521", "\u932B"],
+    ["\u9522", "\u932E"],
+    ["\u9523", "\u947C"],
+    ["\u9524", "\u9318"],
+    ["\u9525", "\u9310"],
+    ["\u9526", "\u9326"],
+    ["\u9528", "\u9341"],
+    ["\u952D", "\u9320"],
+    ["\u952E", "\u9375"],
+    ["\u952F", "\u92F8"],
+    ["\u9530", "\u9333"],
+    ["\u9532", "\u9365"],
+    ["\u9535", "\u93D8"],
+    ["\u9536", "\u9376"],
+    ["\u9537", "\u9354"],
+    ["\u9539", "\u936C"],
+    ["\u953B", "\u935B"],
+    ["\u9540", "\u934D"],
+    ["\u9541", "\u9382"],
+    ["\u9542", "\u93E4"],
+    ["\u9547", "\u93AE"],
+    ["\u954A", "\u9477"],
+    ["\u954C", "\u942B"],
+    ["\u954D", "\u93B3"],
+    ["\u954F", "\u93A6"],
+    ["\u9550", "\u93AC"],
+    ["\u9551", "\u938A"],
+    ["\u9552", "\u93B0"],
+    ["\u9555", "\u9394"],
+    ["\u9556", "\u93E2"],
+    ["\u955C", "\u93E1"],
+    ["\u955D", "\u93D1"],
+    ["\u9563", "\u9410"],
+    ["\u9567", "\u946D"],
+    ["\u956D", "\u9433"],
+    ["\u956F", "\u9432"],
+    ["\u9570", "\u942E"],
+    ["\u9573", "\u9463"],
+    ["\u9576", "\u9472"],
+    ["\u957F", "\u9577"],
+    ["\u95E8", "\u9580"],
+    ["\u95E9", "\u9582"],
+    ["\u95EA", "\u9583"],
+    ["\u95ED", "\u9589"],
+    ["\u95EE", "\u554F"],
+    ["\u95EF", "\u95D6"],
+    ["\u95F0", "\u958F"],
+    ["\u95F2", "\u9592"],
+    ["\u95F4", "\u9593"],
+    ["\u95F5", "\u9594"],
+    ["\u95F7", "\u60B6"],
+    ["\u95F8", "\u9598"],
+    ["\u95F9", "\u9B27"],
+    ["\u95FA", "\u95A8"],
+    ["\u95FB", "\u805E"],
+    ["\u95FD", "\u95A9"],
+    ["\u95FE", "\u95AD"],
+    ["\u9600", "\u95A5"],
+    ["\u9601", "\u95A3"],
+    ["\u9605", "\u95B1"],
+    ["\u9606", "\u95AC"],
+    ["\u9609", "\u95B9"],
+    ["\u960E", "\u95BB"],
+    ["\u9610", "\u95E1"],
+    ["\u9611", "\u95CC"],
+    ["\u9614", "\u95CA"],
+    ["\u9616", "\u95D4"],
+    ["\u9617", "\u95D0"],
+    ["\u9619", "\u95D5"],
+    ["\u961F", "\u968A"],
+    ["\u9633", "\u967D"],
+    ["\u9634", "\u9670"],
+    ["\u9635", "\u9663"],
+    ["\u9636", "\u968E"],
+    ["\u9645", "\u969B"],
+    ["\u9646", "\u9678"],
+    ["\u9647", "\u96B4"],
+    ["\u9648", "\u9673"],
+    ["\u9655", "\u965D"],
+    ["\u9668", "\u9695"],
+    ["\u9669", "\u96AA"],
+    ["\u968F", "\u96A8"],
+    ["\u9690", "\u96B1"],
+    ["\u96B6", "\u96B8"],
+    ["\u96BE", "\u96E3"],
+    ["\u96CF", "\u96DB"],
+    ["\u96F3", "\u9742"],
+    ["\u96FE", "\u9727"],
+    ["\u9701", "\u973D"],
+    ["\u972D", "\u9744"],
+    ["\u9753", "\u975A"],
+    ["\u9765", "\u9768"],
+    ["\u9791", "\u97C3"],
+    ["\u97E6", "\u97CB"],
+    ["\u97E7", "\u97CC"],
+    ["\u97E9", "\u97D3"],
+    ["\u97EC", "\u97DC"],
+    ["\u9875", "\u9801"],
+    ["\u9876", "\u9802"],
+    ["\u9877", "\u9803"],
+    ["\u9879", "\u9805"],
+    ["\u987A", "\u9806"],
+    ["\u987B", "\u9808"],
+    ["\u987D", "\u9811"],
+    ["\u987E", "\u9867"],
+    ["\u987F", "\u9813"],
+    ["\u9880", "\u980E"],
+    ["\u9881", "\u9812"],
+    ["\u9882", "\u980C"],
+    ["\u9884", "\u9810"],
+    ["\u9885", "\u9871"],
+    ["\u9886", "\u9818"],
+    ["\u9887", "\u9817"],
+    ["\u9888", "\u9838"],
+    ["\u9889", "\u9821"],
+    ["\u988A", "\u9830"],
+    ["\u988C", "\u981C"],
+    ["\u988D", "\u6F41"],
+    ["\u9890", "\u9824"],
+    ["\u9891", "\u983B"],
+    ["\u9893", "\u9839"],
+    ["\u9896", "\u7A4E"],
+    ["\u9897", "\u9846"],
+    ["\u9898", "\u984C"],
+    ["\u989A", "\u984E"],
+    ["\u989C", "\u984F"],
+    ["\u989D", "\u984D"],
+    ["\u989E", "\u9873"],
+    ["\u98A0", "\u985B"],
+    ["\u98A2", "\u9865"],
+    ["\u98A4", "\u986B"],
+    ["\u98A6", "\u9870"],
+    ["\u98A7", "\u9874"],
+    ["\u98CE", "\u98A8"],
+    ["\u98CF", "\u98BA"],
+    ["\u98D2", "\u98AF"],
+    ["\u98D3", "\u98B6"],
+    ["\u98D8", "\u98C4"],
+    ["\u98D9", "\u98C6"],
+    ["\u98DE", "\u98DB"],
+    ["\u98E8", "\u9957"],
+    ["\u9965", "\u98E2"],
+    ["\u9967", "\u9933"],
+    ["\u9968", "\u98E9"],
+    ["\u996A", "\u98EA"],
+    ["\u996D", "\u98EF"],
+    ["\u996E", "\u98F2"],
+    ["\u996F", "\u991E"],
+    ["\u9970", "\u98FE"],
+    ["\u9971", "\u98FD"],
+    ["\u9972", "\u98FC"],
+    ["\u9974", "\u98F4"],
+    ["\u9975", "\u990C"],
+    ["\u9976", "\u9952"],
+    ["\u9977", "\u9909"],
+    ["\u997A", "\u9903"],
+    ["\u997C", "\u9905"],
+    ["\u997D", "\u9911"],
+    ["\u997F", "\u9913"],
+    ["\u9980", "\u9918"],
+    ["\u9981", "\u9912"],
+    ["\u9984", "\u991B"],
+    ["\u9985", "\u9921"],
+    ["\u9986", "\u9928"],
+    ["\u9988", "\u994B"],
+    ["\u998B", "\u995E"],
+    ["\u998D", "\u9943"],
+    ["\u998F", "\u993E"],
+    ["\u9990", "\u9948"],
+    ["\u9991", "\u9949"],
+    ["\u9992", "\u9945"],
+    ["\u9994", "\u994C"],
+    ["\u9A6C", "\u99AC"],
+    ["\u9A6D", "\u99AD"],
+    ["\u9A6E", "\u99B1"],
+    ["\u9A6F", "\u99B4"],
+    ["\u9A70", "\u99B3"],
+    ["\u9A71", "\u9A45"],
+    ["\u9A73", "\u99C1"],
+    ["\u9A74", "\u9A62"],
+    ["\u9A76", "\u99DB"],
+    ["\u9A77", "\u99DF"],
+    ["\u9A79", "\u99D2"],
+    ["\u9A7B", "\u99D0"],
+    ["\u9A7C", "\u99DD"],
+    ["\u9A7E", "\u99D5"],
+    ["\u9A7F", "\u9A5B"],
+    ["\u9A81", "\u9A4D"],
+    ["\u9A82", "\u7F75"],
+    ["\u9A84", "\u9A55"],
+    ["\u9A85", "\u9A4A"],
+    ["\u9A86", "\u99F1"],
+    ["\u9A87", "\u99ED"],
+    ["\u9A88", "\u99E2"],
+    ["\u9A8A", "\u9A6A"],
+    ["\u9A8B", "\u9A01"],
+    ["\u9A8C", "\u9A57"],
+    ["\u9A8F", "\u99FF"],
+    ["\u9A90", "\u9A0F"],
+    ["\u9A91", "\u9A0E"],
+    ["\u9A92", "\u9A0D"],
+    ["\u9A93", "\u9A05"],
+    ["\u9A97", "\u9A19"],
+    ["\u9A9A", "\u9A37"],
+    ["\u9A9B", "\u9A16"],
+    ["\u9A9C", "\u9A41"],
+    ["\u9A9D", "\u9A2E"],
+    ["\u9A9E", "\u9A2B"],
+    ["\u9A9F", "\u9A38"],
+    ["\u9AA0", "\u9A43"],
+    ["\u9AA1", "\u9A3E"],
+    ["\u9AA2", "\u9A44"],
+    ["\u9AA4", "\u9A5F"],
+    ["\u9AA5", "\u9A65"],
+    ["\u9AC5", "\u9ACF"],
+    ["\u9ACB", "\u9AD6"],
+    ["\u9ACC", "\u9AD5"],
+    ["\u9B13", "\u9B22"],
+    ["\u9B47", "\u9B58"],
+    ["\u9B49", "\u9B4E"],
+    ["\u9C7C", "\u9B5A"],
+    ["\u9C7F", "\u9B77"],
+    ["\u9C81", "\u9B6F"],
+    ["\u9C82", "\u9B74"],
+    ["\u9C85", "\u9B81"],
+    ["\u9C86", "\u9B83"],
+    ["\u9C88", "\u9C78"],
+    ["\u9C8B", "\u9B92"],
+    ["\u9C8D", "\u9B91"],
+    ["\u9C8E", "\u9C5F"],
+    ["\u9C91", "\u9BAD"],
+    ["\u9C94", "\u9BAA"],
+    ["\u9C95", "\u9B9E"],
+    ["\u9C9B", "\u9BAB"],
+    ["\u9C9F", "\u9C58"],
+    ["\u9CA0", "\u9BC1"],
+    ["\u9CA2", "\u9C31"],
+    ["\u9CA3", "\u9C39"],
+    ["\u9CA4", "\u9BC9"],
+    ["\u9CA5", "\u9C23"],
+    ["\u9CA6", "\u9C37"],
+    ["\u9CA7", "\u9BC0"],
+    ["\u9CA8", "\u9BCA"],
+    ["\u9CA9", "\u9BC7"],
+    ["\u9CAB", "\u9BFD"],
+    ["\u9CAD", "\u9BD6"],
+    ["\u9CAE", "\u9BEA"],
+    ["\u9CB1", "\u9BE1"],
+    ["\u9CB2", "\u9BE4"],
+    ["\u9CB3", "\u9BE7"],
+    ["\u9CB5", "\u9BE2"],
+    ["\u9CB6", "\u9BF0"],
+    ["\u9CB7", "\u9BDB"],
+    ["\u9CB8", "\u9BE8"],
+    ["\u9CBB", "\u9BD4"],
+    ["\u9CBC", "\u9C5D"],
+    ["\u9CBD", "\u9C08"],
+    ["\u9CC3", "\u9C13"],
+    ["\u9CC4", "\u9C77"],
+    ["\u9CC5", "\u9C0D"],
+    ["\u9CC7", "\u9C09"],
+    ["\u9CCC", "\u9C32"],
+    ["\u9CCD", "\u9C2D"],
+    ["\u9CCE", "\u9C28"],
+    ["\u9CCF", "\u9C25"],
+    ["\u9CD0", "\u9C29"],
+    ["\u9CD3", "\u9C33"],
+    ["\u9CD4", "\u9C3E"],
+    ["\u9CD5", "\u9C48"],
+    ["\u9CD6", "\u9C49"],
+    ["\u9CD7", "\u9C3B"],
+    ["\u9CDC", "\u9C56"],
+    ["\u9CDD", "\u9C54"],
+    ["\u9CDE", "\u9C57"],
+    ["\u9CDF", "\u9C52"],
+    ["\u9CE2", "\u9C67"],
+    ["\u9E1F", "\u9CE5"],
+    ["\u9E20", "\u9CE9"],
+    ["\u9E21", "\u96DE"],
+    ["\u9E22", "\u9CF6"],
+    ["\u9E23", "\u9CF4"],
+    ["\u9E25", "\u9DD7"],
+    ["\u9E26", "\u9D09"],
+    ["\u9E28", "\u9D07"],
+    ["\u9E29", "\u9D06"],
+    ["\u9E2A", "\u9D23"],
+    ["\u9E2B", "\u9D87"],
+    ["\u9E2C", "\u9E15"],
+    ["\u9E2D", "\u9D28"],
+    ["\u9E2F", "\u9D26"],
+    ["\u9E31", "\u9D1F"],
+    ["\u9E33", "\u9D1B"],
+    ["\u9E35", "\u9D15"],
+    ["\u9E37", "\u9DD9"],
+    ["\u9E38", "\u9D2F"],
+    ["\u9E39", "\u9D30"],
+    ["\u9E3D", "\u9D3F"],
+    ["\u9E3E", "\u9E1E"],
+    ["\u9E3F", "\u9D3B"],
+    ["\u9E42", "\u9E1D"],
+    ["\u9E43", "\u9D51"],
+    ["\u9E44", "\u9D60"],
+    ["\u9E45", "\u9D5D"],
+    ["\u9E49", "\u9D61"],
+    ["\u9E4A", "\u9D72"],
+    ["\u9E4C", "\u9D6A"],
+    ["\u9E4F", "\u9D6C"],
+    ["\u9E51", "\u9D89"],
+    ["\u9E55", "\u9D98"],
+    ["\u9E57", "\u9D9A"],
+    ["\u9E58", "\u9DBB"],
+    ["\u9E5C", "\u9DA9"],
+    ["\u9E5E", "\u9DC2"],
+    ["\u9E63", "\u9DBC"],
+    ["\u9E64", "\u9DB4"],
+    ["\u9E66", "\u9E1A"],
+    ["\u9E67", "\u9DD3"],
+    ["\u9E68", "\u9DDA"],
+    ["\u9E69", "\u9DEF"],
+    ["\u9E6A", "\u9DE6"],
+    ["\u9E6C", "\u9DF8"],
+    ["\u9E6D", "\u9DFA"],
+    ["\u9E70", "\u9DF9"],
+    ["\u9E73", "\u9E1B"],
+    ["\u9EA6", "\u9EA5"],
+    ["\u9EB8", "\u9EA9"],
+    ["\u9EC4", "\u9EC3"],
+    ["\u9EC9", "\u9ECC"],
+    ["\u9EE1", "\u9EF6"],
+    ["\u9EE9", "\u9EF7"],
+    ["\u9EFE", "\u9EFD"],
+    ["\u9F0B", "\u9EFF"],
+    ["\u9F0D", "\u9F09"],
+    ["\u9F50", "\u9F4A"],
+    ["\u9F51", "\u9F4F"],
+    ["\u9F7F", "\u9F52"],
+    ["\u9F80", "\u9F54"],
+    ["\u9F81", "\u9F55"],
+    ["\u9F84", "\u9F61"],
+    ["\u9F85", "\u9F59"],
+    ["\u9F86", "\u9F60"],
+    ["\u9F87", "\u9F5C"],
+    ["\u9F88", "\u9F66"],
+    ["\u9F89", "\u9F6C"],
+    ["\u9F8A", "\u9F6A"],
+    ["\u9F8B", "\u9F72"],
+    ["\u9F8C", "\u9F77"],
+    ["\u9F99", "\u9F8D"],
+    ["\u9F9A", "\u9F94"],
+    ["\u9F9B", "\u9F95"],
+    ["\u9F9F", "\u9F9C"]
+  ];
+  var SIMP_ONLY = new Set(SIMP_TRAD_PAIRS.map((p) => p[0]));
+  var TRAD_ONLY = new Set(SIMP_TRAD_PAIRS.map((p) => p[1]));
+  var CJK_RE = /[㐀-鿿豈-﫿]/g;
+  var NONSPACE_RE = /\S/g;
+  function detectLanguage(text) {
+    const src = typeof text === "string" ? text : "";
+    const nonSpace = src.match(NONSPACE_RE);
+    if (!nonSpace || nonSpace.length === 0) return { code: null, confidence: 0 };
+    const cjk = src.match(CJK_RE);
+    const cjkCount = cjk ? cjk.length : 0;
+    const cjkRatio = cjkCount / nonSpace.length;
+    if (cjkRatio < 0.15) {
+      const hasLatin = /[A-Za-z]/.test(src);
+      return hasLatin ? { code: "en", confidence: 0.9 } : { code: null, confidence: 0 };
+    }
+    let trad = 0;
+    let simp = 0;
+    for (const ch of src) {
+      if (TRAD_ONLY.has(ch)) trad++;
+      else if (SIMP_ONLY.has(ch)) simp++;
+    }
+    const discriminators = trad + simp;
+    if (discriminators === 0) return { code: null, confidence: 0 };
+    const code = trad >= simp ? "zh-HK" : "zh-CN";
+    const dominance = Math.max(trad, simp) / discriminators;
+    const confidence = discriminators >= 3 && dominance >= 0.75 ? 0.9 : dominance >= 0.6 ? 0.5 : 0.2;
+    return { code, confidence };
+  }
+
+  // i18n.js
+  function t(key, subs = null, fallback = null) {
+    try {
+      const msg = chrome.i18n.getMessage(key, subs || void 0);
+      if (msg) return msg;
+    } catch {
+    }
+    return fallback !== null ? fallback : key;
+  }
+  function uiLocale() {
+    try {
+      return chrome.i18n.getUILanguage();
+    } catch {
+      return "en";
+    }
+  }
+  var RTF_CACHE = /* @__PURE__ */ new Map();
+  function relativeTimeLocalized(ts) {
+    if (!ts) return t("time_never", null, "never");
+    const then = new Date(ts).getTime();
+    if (isNaN(then)) return t("time_never", null, "never");
+    const diff = then - Date.now();
+    const abs = Math.abs(diff);
+    const rtf = RTF_CACHE.get(uiLocale()) || new Intl.RelativeTimeFormat(uiLocale(), { numeric: "auto" });
+    RTF_CACHE.set(uiLocale(), rtf);
+    const minute = 6e4, hour = 36e5, day = 864e5;
+    if (abs < minute) return t("time_just_now", null, "just now");
+    if (abs < hour) return rtf.format(Math.round(diff / minute), "minute");
+    if (abs < day) return rtf.format(Math.round(diff / hour), "hour");
+    if (abs < 7 * day) return rtf.format(Math.round(diff / day), "day");
+    return new Intl.DateTimeFormat(uiLocale()).format(then);
+  }
+
+  // categories.js
+  var CATEGORIES = Object.freeze([
+    Object.freeze({ id: "writing", name: "Writing & Content", description: "blog posts, articles, stories, copywriting, content generation" }),
+    Object.freeze({ id: "coding", name: "Coding & Development", description: "code generation, debugging, code review, technical documentation" }),
+    Object.freeze({ id: "analysis", name: "Analysis & Research", description: "summarization, research, fact-finding, comparison, synthesis" }),
+    Object.freeze({ id: "creative", name: "Creative & Design", description: "creative writing, brainstorming, design ideas, naming, visual concepts" }),
+    Object.freeze({ id: "business", name: "Business & Marketing", description: "marketing copy, sales, strategy, branding, customer-facing content" }),
+    Object.freeze({ id: "education", name: "Education & Learning", description: "explanations, tutorials, study aids, lesson plans, quizzes" }),
+    Object.freeze({ id: "data", name: "Data & Technical", description: "data analysis, SQL, spreadsheets, technical specs, system design" }),
+    Object.freeze({ id: "communication", name: "Communication & Email", description: "emails, messages, letters, professional communication" }),
+    Object.freeze({ id: "productivity", name: "Productivity & Planning", description: "task lists, planning, scheduling, project management, meeting notes" }),
+    Object.freeze({ id: "other", name: "Other", description: "anything that does not clearly fit the above" })
+  ]);
+  var CATEGORY_NAMES = CATEGORIES.map((c) => c.name);
+  var BY_NAME = new Map(CATEGORIES.map((c) => [c.name.toLowerCase(), c]));
+  var BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
 
   // content.js
+  window.PFLanguage = { detectLanguage, SUPPORTED_LANGUAGES, DEFAULT_PROMPT_LANGUAGES, languageMeta };
+  window.PFI18n = { t, relativeTimeLocalized };
+  window.PFCategories = CATEGORIES;
   var __PF_ALREADY_INITIALIZED = !!window.__OPM_PROMPT_MANAGER_INITIALIZED;
   window.__OPM_PROMPT_MANAGER_INITIALIZED = true;
   var ensureStylesInjected = /* @__PURE__ */ (() => {
@@ -3077,7 +4452,7 @@
       const activeTag = (_PromptUIManager.activeTagFilter || "all").toLowerCase();
       Array.from(container.children).forEach((item) => {
         const entry = window.__PF_PROMPT_INDEX?.get(item.dataset.uuid);
-        const matchesSearch = value === "" || entry && (entry.title.includes(value) || entry.content.includes(value) || entry.tags.some((t) => t.includes(value)));
+        const matchesSearch = value === "" || entry && (entry.title.includes(value) || entry.content.includes(value) || entry.tags.some((t2) => t2.includes(value)));
         let matchesTag = true;
         if (activeTag !== "all") {
           matchesTag = !!(entry && entry.tags.includes(activeTag));
@@ -3429,12 +4804,12 @@
       form.appendChild(varContainer);
       _PromptUIManager.setPanelHeightMode("fixed");
       const btnContainer = createEl2("div", { styles: { display: "flex", flexDirection: "column", gap: "8px", marginTop: "auto", position: "sticky", bottom: "0", background: "transparent" } });
-      const submitBtn = createEl2("button", { innerHTML: "Submit", className: `opm-button opm-${getMode()}` });
+      const submitBtn = createEl2("button", { innerHTML: t("panel_submit", null, "Submit"), className: `opm-button opm-${getMode()}` });
       submitBtn.addEventListener("click", () => {
         _PromptUIManager.inVariableInputMode = false;
         onSubmit(varValues);
       });
-      const backBtn = createEl2("button", { innerHTML: "Back", className: `opm-button opm-${getMode()}` });
+      const backBtn = createEl2("button", { innerHTML: t("panel_back", null, "Back"), className: `opm-button opm-${getMode()}` });
       backBtn.addEventListener("click", () => {
         _PromptUIManager.inVariableInputMode = false;
         PanelRouter.mount(PanelView.LIST);
@@ -3459,12 +4834,14 @@
         initialTitle: prompt.title,
         initialContent: prompt.content,
         initialCategory: prompt.category || null,
-        submitLabel: "Save Changes",
-        onSubmit: async ({ title, content, tags, category }) => {
+        initialLanguage: prompt.language || null,
+        submitLabel: t("panel_save_changes", null, "Save Changes"),
+        onSubmit: async ({ title, content, tags, category, language }) => {
           const ps = await PromptStorageManager2._ps();
           const update = { title, content };
           if (Array.isArray(tags)) update.tags = tags;
           if (category) update.category = category;
+          update.language = language;
           await PromptStorageManager2.addVersion(prompt.uuid, content, "manual_edit");
           await ps.updatePrompt(prompt.uuid, update);
           PanelRouter.mount(PanelView.EDIT);
@@ -3480,22 +4857,58 @@
         const btnDark = isDarkMode();
         const btnCss = `padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid ${btnDark ? "#4a5568" : "#ccc"};background:${btnDark ? "#2d3748" : "#fff"};color:${btnDark ? "#e2e8f0" : "#333"};`;
         const actionRow = createEl2("div", { styles: { display: "flex", gap: "6px", marginBottom: "8px", flexWrap: "wrap" } });
-        const vhBtn = createEl2("button", { innerHTML: "\u{1F4CB} Versions", className: "opm-button opm-standard" });
+        const vhBtn = createEl2("button", { innerHTML: t("panel_versions", null, "\u{1F4CB} Versions"), className: "opm-button opm-standard" });
         vhBtn.style.cssText = btnCss;
         vhBtn.addEventListener("click", () => _PromptUIManager.showVersionHistory(prompt.uuid));
         actionRow.appendChild(vhBtn);
-        const impBtn = createEl2("button", { innerHTML: "\u2728 Improve", className: "opm-button opm-standard" });
+        const impBtn = createEl2("button", { innerHTML: t("panel_improve", null, "\u2728 Improve"), className: "opm-button opm-standard" });
         impBtn.style.cssText = btnCss;
         impBtn.addEventListener("click", async () => {
           await _PromptUIManager.improvePrompt(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
         });
         actionRow.appendChild(impBtn);
-        const varBtn = createEl2("button", { innerHTML: "\u{1F504} Variants", className: "opm-button opm-standard" });
+        const varBtn = createEl2("button", { innerHTML: t("panel_variants_btn", null, "\u{1F504} Variants"), className: "opm-button opm-standard" });
         varBtn.style.cssText = btnCss;
         varBtn.addEventListener("click", async () => {
           await _PromptUIManager.generateVariants(prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
         });
         actionRow.appendChild(varBtn);
+        const trBtn = createEl2("button", { innerHTML: t("panel_translate", null, "\u{1F310} Translate"), className: "opm-button opm-standard" });
+        trBtn.style.cssText = btnCss;
+        trBtn.addEventListener("click", () => {
+          if (actionRow.querySelector(".opm-translate-pick")) return;
+          const pick = createEl2("select", { className: `opm-translate-pick opm-input-field opm-${getMode()}`, styles: { borderRadius: "4px", fontSize: "12px" } });
+          pick.appendChild(createEl2("option", { attributes: { value: "" } }, [t("panel_translate_to", null, "Translate to\u2026")]));
+          for (const l of window.PFLanguage ? window.PFLanguage.SUPPORTED_LANGUAGES : []) {
+            if (l.code !== prompt.language) pick.appendChild(createEl2("option", { attributes: { value: l.code } }, [l.label]));
+          }
+          pick.addEventListener("change", async () => {
+            const to = pick.value;
+            pick.remove();
+            if (to) await _PromptUIManager.translatePrompt(prompt.uuid, to, qs(`#${SELECTORS.PROMPT_LIST}`));
+          });
+          actionRow.appendChild(pick);
+        });
+        actionRow.appendChild(trBtn);
+        const forkBtn = createEl2("button", { innerHTML: t("editor_fork", null, "Fork \u25BE"), className: "opm-button opm-standard" });
+        forkBtn.style.cssText = btnCss;
+        forkBtn.addEventListener("click", () => {
+          if (actionRow.querySelector(".opm-fork-pick")) return;
+          const pick = createEl2("select", { className: `opm-fork-pick opm-input-field opm-${getMode()}`, styles: { borderRadius: "4px", fontSize: "12px" } });
+          pick.appendChild(createEl2("option", { attributes: { value: "" } }, [t("editor_fork_menu", null, "Fork / duplicate\u2026")]));
+          pick.appendChild(createEl2("option", { attributes: { value: "duplicate" } }, [t("editor_duplicate", null, "Duplicate (same language)")]));
+          for (const l of window.PFLanguage ? window.PFLanguage.SUPPORTED_LANGUAGES : []) {
+            if (l.code !== prompt.language) pick.appendChild(createEl2("option", { attributes: { value: "fork:" + l.code } }, [t("editor_fork_lang", [l.label], `Fork to ${l.label}`)]));
+          }
+          pick.addEventListener("change", async () => {
+            const v = pick.value;
+            pick.remove();
+            if (v === "duplicate") await _PromptUIManager.forkPrompt(prompt, null);
+            else if (v.startsWith("fork:")) await _PromptUIManager.forkPrompt(prompt, v.slice(5));
+          });
+          actionRow.appendChild(pick);
+        });
+        actionRow.appendChild(forkBtn);
         const saveBtn = form.querySelector(".opm-button");
         if (saveBtn && saveBtn.parentNode) saveBtn.parentNode.insertBefore(actionRow, saveBtn);
         const enableTags = await PromptStorageManager2.getEnableTags();
@@ -3521,15 +4934,15 @@
             const titleIn = form.querySelector(".opm-input-field");
             const contentArea = form.querySelector(".opm-textarea-field");
             const catSel = form.querySelectorAll(".opm-input-field")[2];
-            const t = titleIn.value.trim(), c = contentArea.value.trim();
-            if (!t || !c) {
+            const t2 = titleIn.value.trim(), c = contentArea.value.trim();
+            if (!t2 || !c) {
               alert("Please fill in both title and content.");
               return;
             }
             const cat = catSel && catSel.tagName === "SELECT" && catSel.value !== "Uncategorized" ? catSel.value : null;
             const ps = await PromptStorageManager2._ps();
             await PromptStorageManager2.addVersion(prompt.uuid, c, "manual_edit");
-            await ps.updatePrompt(prompt.uuid, { title: t, content: c, tags: tagInput.getTags(), category: cat });
+            await ps.updatePrompt(prompt.uuid, { title: t2, content: c, tags: tagInput.getTags(), category: cat });
             PanelRouter.mount(PanelView.EDIT);
           }, { once: true });
         }
@@ -3550,7 +4963,7 @@
         const ps = await PromptStorageManager2._ps();
         const versions = await ps.getVersions(promptUuid);
         if (!versions || versions.length === 0) {
-          alert("No version history yet.");
+          alert(t("panel_no_versions", null, "No version history yet."));
           return;
         }
         const dark = isDarkMode();
@@ -3562,7 +4975,7 @@
         const modal = createEl2("div");
         modal.style.cssText = `background:${themeBg};color:${themeText};border:1px solid ${themeBorder};border-radius:12px;padding:20px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);`;
         const header = createEl2("div", { styles: { display: "flex", justifyContent: "space-between", marginBottom: "16px" } });
-        header.appendChild(createEl2("h3", { styles: { margin: 0, fontSize: "16px" } }, ["Version History"]));
+        header.appendChild(createEl2("h3", { styles: { margin: 0, fontSize: "16px" } }, [t("panel_version_history", null, "Version History")]));
         const closeBtn = createEl2("button", { innerHTML: "\xD7", className: "opm-button-close" });
         closeBtn.style.cssText = `background:none;border:none;font-size:24px;cursor:pointer;color:${themeText};`;
         closeBtn.addEventListener("click", () => overlay.remove());
@@ -3576,7 +4989,7 @@
           metaRow.appendChild(createEl2("span", { styles: { color: "#666", fontSize: "12px" } }, [` ${v.source} \xB7 ${new Date(v.createdAt).toLocaleString()}`]));
           row.appendChild(metaRow);
           const btns = createEl2("div", { styles: { display: "flex", gap: "4px", marginTop: "4px" } });
-          const viewBtn = createEl2("button", { innerHTML: "View", className: "opm-button opm-standard" });
+          const viewBtn = createEl2("button", { innerHTML: t("panel_view", null, "View"), className: "opm-button opm-standard" });
           viewBtn.style.cssText = "padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;";
           viewBtn.addEventListener("click", () => {
             alert(`Version ${i + 1} (${v.source}):
@@ -3585,12 +4998,12 @@ ${v.content}`);
           });
           btns.appendChild(viewBtn);
           if (i < versions.length - 1) {
-            const restoreBtn = createEl2("button", { innerHTML: "Restore", className: "opm-button opm-standard" });
+            const restoreBtn = createEl2("button", { innerHTML: t("panel_restore", null, "Restore"), className: "opm-button opm-standard" });
             restoreBtn.style.cssText = "padding:4px 10px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #ccc;";
             restoreBtn.addEventListener("click", async () => {
               await ps.restoreVersion(promptUuid, i);
               overlay.remove();
-              alert(`Restored as v${versions.length}`);
+              alert(t("panel_restored", [String(versions.length)], `Restored as v${versions.length}`));
               await PanelRouter.mount(PanelView.LIST);
             });
             btns.appendChild(restoreBtn);
@@ -3605,7 +5018,7 @@ ${v.content}`);
         document.body.appendChild(overlay);
       } catch (e) {
         console.error("Version history failed:", e);
-        alert("Failed to load version history: " + e.message);
+        alert(t("panel_versions_failed", [e.message], "Failed to load version history: " + e.message));
       }
     }
     static async improvePrompt(promptUuid, listEl) {
@@ -3616,6 +5029,47 @@ ${v.content}`);
     }
     static async autoSuggestMetadata(promptUuid, listEl) {
       return autoSuggestMetadata(promptUuid, listEl);
+    }
+    static async translatePrompt(promptUuid, toLang, listEl) {
+      return translatePrompt(promptUuid, toLang, listEl);
+    }
+    /**
+     * COMMENT: v3 feature D-VI — fork a prompt into a language-linked group.
+     * toLang = null duplicates in place; otherwise the content is translated
+     * via the SW proxy and saved as a sibling sharing the groupId (created and
+     * back-filled onto the source on the first fork).
+     */
+    static async forkPrompt(prompt, toLang) {
+      const ps = await PromptStorageManager2._ps();
+      if (!prompt.language && window.PFLanguage) {
+        const detected = window.PFLanguage.detectLanguage(prompt.content || "").code;
+        if (detected) {
+          await ps.updatePrompt(prompt.uuid, { language: detected });
+          prompt.language = detected;
+        }
+      }
+      let groupId = prompt.groupId;
+      if (!groupId) {
+        groupId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `g-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await ps.updatePrompt(prompt.uuid, { groupId });
+      }
+      let content = prompt.content;
+      let language = prompt.language || null;
+      if (toLang && toLang !== prompt.language) {
+        const { translateText } = await import(chrome.runtime.getURL("ai-operations.js"));
+        content = await translateText(prompt.content, toLang, prompt.language || null);
+        if (!content) return;
+        language = toLang;
+      }
+      await PromptStorageManager2.savePrompt({
+        title: prompt.title,
+        content,
+        language,
+        groupId,
+        tags: prompt.tags,
+        category: prompt.category
+      });
+      await PanelRouter.mount(PanelView.LIST);
     }
     static createSettingsForm() {
       return PromptUI.Views.createSettingsForm();
@@ -3812,25 +5266,6 @@ ${v.content}`);
       promptSelectHandler: null,
       mutationObserver: null,
       storageWatcherAttached: false
-    };
-    const checkCurrentSitePermission = async () => {
-      try {
-        const response = await fetch(chrome.runtime.getURL("llm_providers.json"));
-        if (!response.ok) return false;
-        const data = await response.json();
-        const currentUrl = window.location.href;
-        for (const provider of data.llm_providers) {
-          const regexPattern = provider.pattern.replace(/\\/g, "\\\\").replace(/[.]/g, "\\.").replace(/[*]/g, ".*");
-          const urlRegex = new RegExp(`^${regexPattern}`);
-          if (urlRegex.test(currentUrl)) {
-            const hasPermission = await chrome.permissions.contains({ origins: [provider.pattern] });
-            return hasPermission;
-          }
-        }
-      } catch (e) {
-        console.warn("[PromptForge] Failed to check site permission:", e);
-      }
-      return false;
     };
     const copyToClipboardWithFeedback = async (text) => {
       try {

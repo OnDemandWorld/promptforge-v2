@@ -44,7 +44,8 @@ There is a double-injection guard (`window.__OPM_PROMPT_MANAGER_INITIALIZED` / `
 ## Sources of truth
 
 - **`llm_providers.json`** — the 19 supported AI sites. Defines `pattern` (URL match), `element_selector` (input box), and icon. `integration-manager.js` derives the provider list from this file; `inputBoxHandler.js` reads it directly; `service-worker.js` uses it for permission/injection decisions. Adding a provider = editing this one file.
-- **`promptStorage.js`** — every prompt read/write must go through this module. Single key `prompts_storage` in `chrome.storage.local`, schema version 3. Exposes a Promise-based API (`getPrompts`, `savePrompt`, `updatePrompt`, `addVersion`, etc.) and normalises legacy shapes on read.
+- **`promptStorage.js`** — every prompt read/write must go through this module. Single key `prompts_storage` in `chrome.storage.local`, schema version 5. Exposes a Promise-based API (`getPrompts`, `savePrompt`, `updatePrompt`, `addVersion`, etc.) and normalises legacy shapes on read.
+- **`language.js`** — supported-language registry (en/zh-HK/zh-CN), BCP-47 normalisation, and offline language detection (CJK ratio + Traditional/Simplified discrimination). Pure module — safe in every context.
 - **`ollama-service.js`** — all Ollama REST calls. Default model `gemma4:latest`. Supports both local (`localhost:11434`) and cloud (`ollama.com` with bearer token). Settings are read from `chrome.storage.local` on each call (`getOllamaSettings`).
 
 ## Privacy contract
@@ -62,13 +63,16 @@ Two surfaces use Ollama differently:
 ```jsonc
 // chrome.storage.local, key "prompts_storage"
 {
-  "version": 3,
+  "version": 5,
   "prompts": [{
     "uuid": "...",            // crypto.randomUUID()
     "title", "content",
     "tags": [],               // normalised: lowercase, hyphenated, deduped
     "category": "Writing & Content",  // display string from CATEGORIES in app.js
-    "categoryId": null, "folderId": null,  // legacy/compatibility
+    "categoryId": "writing",  // canonical id (categories.js); derived from legacy names
+    "folderId": null,         // legacy/compatibility
+    "language": "zh-HK",      // BCP-47 code (en/zh-HK/zh-CN/…) or null; v4+, lazy migration
+    "groupId": null,          // links language-forked siblings (v5)
     "versions": [{ "content", "source", "metadata", "createdAt" }],
     "createdAt", "updatedAt", "favorite", "useCount", "lastUsedAt"
   }],

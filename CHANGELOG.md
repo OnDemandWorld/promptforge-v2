@@ -4,11 +4,17 @@ All notable changes to PromptForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.2.1] - 2026-07-28
+## [3.0.0] - 2026-07-28
 
 ### Fixed
 
 - **Extension failed to load: "Invalid value for 'web_accessible_resources[0]'. Invalid match pattern."** Chrome rejects match patterns containing paths in `web_accessible_resources.matches` (unlike content-script matches), so `*://github.com/copilot/*` and `*://apps.abacus.ai/chatllm/*` made the manifest unloadable. Both are now origin-only (`*://github.com/*`, `*://apps.abacus.ai/*`); the provider list in `llm_providers.json` keeps the path-scoped patterns for injection targeting.
+- **"Ollama rejected the request (origin or auth)" on all AI features — 2.2.0 regression.** Ollama validates the `Origin` header server-side and 403s `chrome-extension://*`; the service worker's and app page's requests carry exactly that origin, and `Origin` is a forbidden header for `fetch()`. The 2.2.0 security rework removed the `declarativeNetRequest` Origin-rewrite rule assuming host-permissioned requests needed no header fix — incorrect; the browser enforces CORS, Ollama enforces its own allow-list. The rule is restored in `cors-rules.js`, now scoped to **this extension's own requests only** (`initiatorDomains: [chrome.runtime.id]`) — tighter than the 2.1.0 rule, which also covered provider-page initiators. If Chrome rejects the self-scoped form, it falls back to an unscoped rule with a loud console warning.
+
+### Added
+
+- **Multilingual prompts (D):** per-prompt `language` (en/zh-HK/zh-CN, auto-detected offline incl. Traditional/Simplified discrimination), editor selector, library filter + badges, Settings → Languages; AI rewrite/variants/metadata now adapt to the prompt's language; **Translate button** in the editor and panel — streams a translation into the textarea, stores it as an `ai_translation` version (`{from, to}` metadata), and updates the prompt's language field; zh-HK↔zh-CN uses a strict script-conversion system prompt (no rephrasing). **Fork ▾** (editor + panel): duplicate a prompt or fork a translated copy into a language-linked group (`groupId`, schema v5 — the id is back-filled onto the source on first fork); grouped cards show **EN · 简 · 繁 chips** that jump between siblings; `groupId` is part of the sync digest, so forks propagate across devices. Full UI localization — `_locales/{en,zh_HK,zh_CN}`, 209 keys (schema v5, canonical `categoryId`s via `categories.js`).
+- **Folder sync (E):** Settings → Folder Sync — sync the library through `promptforge-sync.json` in any cloud-synced folder (iCloud/Dropbox/Box/OneDrive) with three-way merge, tombstoned deletions, and conflict resolution. Two transports: File System Access API (Chrome/Edge) and a **Native Messaging helper for Brave** (`native-host/install.sh <extension-id>` one-time setup) — Brave blocks the File System Access API by policy.
 
 ## [2.2.0] - 2026-07-28
 

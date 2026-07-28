@@ -97,6 +97,9 @@ function looksLikeResponseInsteadOfPrompt(text) {
 /* --------------------------------------------------------------------------
    Inline toast helper — avoids alert() blocking dialogs
    -------------------------------------------------------------------------- */
+// COMMENT: v3 D-IV — i18n via the window contract (bundled i18n.js).
+const tt = (key, subs, fallback) => (window.PFI18n ? window.PFI18n.t(key, subs || null, fallback) : fallback);
+
 function _toast(msg, type = 'info', duration = 2500) {
   const t = createEl('div', {}, [msg]);
   t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:8px;font-size:13px;z-index:100001;color:#fff;transition:opacity 0.2s;';
@@ -127,13 +130,13 @@ export async function improvePrompt(promptUuid, listEl) {
     // Show improving state
     const statusDiv = createEl('div', { className: 'opm-improving-status' });
     statusDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;display:flex;align-items:center;gap:8px;';
-    const statusLabel = createEl('span', {}, ['Improving…']);
+    const statusLabel = createEl('span', {}, [tt('panel_improving', null, 'Improving…')]);
     const stopButton = createEl('button');
     stopButton.style.cssText = 'background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;';
-    stopButton.textContent = 'Stop';
+    stopButton.textContent = tt('panel_stop', null, 'Stop');
     statusDiv.append(statusLabel, stopButton);
 
-    const stream = ollamaStream({ op: 'improve', promptText: original });
+    const stream = ollamaStream({ op: 'improve', promptText: original, language: prompt.language });
     stopButton.addEventListener('click', () => {
       improving = false;
       stream.cancel(); // COMMENT: aborts the SW-side request (old code left it running)
@@ -162,12 +165,12 @@ export async function improvePrompt(promptUuid, listEl) {
       await PromptStorageManager.addVersion(promptUuid, buffer, 'ai_improvement');
       await PromptStorageManager._ps().then(ps => ps.updatePrompt(promptUuid, { content: buffer }));
       if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
-      _toast('Prompt improved!', 'success');
+      _toast(tt('panel_improved', null, 'Prompt improved!'), 'success');
     }
   } catch (e) {
     if (!/abort/i.test(e.message || '')) {
       console.error('Improve failed:', e);
-      _toast('Improvement failed: ' + e.message, 'error');
+      _toast(tt('panel_improve_failed', [e.message], 'Improvement failed: ' + e.message), 'error');
     }
   }
 }
@@ -186,12 +189,12 @@ export async function generateVariants(promptUuid, listEl) {
 
     const statusDiv = createEl('div', { className: 'opm-improving-status' });
     statusDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;';
-    statusDiv.textContent = 'Generating variants…';
+    statusDiv.textContent = tt('panel_generating', null, 'Generating variants…');
     document.body.appendChild(statusDiv);
 
     let variants = [];
     try {
-      variants = await ollamaRPC({ op: 'variants', promptText: prompt.content, count: 3 });
+      variants = await ollamaRPC({ op: 'variants', promptText: prompt.content, count: 3, language: prompt.language });
     } finally {
       statusDiv.remove();
     }
@@ -202,9 +205,83 @@ export async function generateVariants(promptUuid, listEl) {
         await PromptStorageManager.addVersion(promptUuid, variants[i], 'ai_variant', { variantGroup: g, variantIndex: i + 1 });
       }
       if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
-      _toast(`Generated ${variants.length} variants!`, 'success');
+      _toast(tt('panel_variants_generated', [String(variants.length)], `Generated ${variants.length} variants!`), 'success');
     }
-  } catch (e) { console.error('Variants failed:', e); _toast('Variant generation failed: ' + e.message, 'error'); }
+  } catch (e) { console.error('Variants failed:', e); _toast(tt('panel_variants_failed', [e.message], 'Variant generation failed: ' + e.message), 'error'); }
+}
+
+/**
+ * COMMENT: v3 feature D-V — translate/convert a prompt to another language
+ * (script-only conversion for zh-HK↔zh-CN, full translation otherwise).
+ * Stores the result as a version ('ai_translation') and updates the prompt's
+ * language field so detection/rewrite stay consistent.
+ * @param {string} promptUuid
+ * @param {string} toLang - BCP-47 target code
+ * @param {HTMLElement|null} listEl
+ */
+export async function translatePrompt(promptUuid, toLang, listEl) {
+  try {
+    const prompts = await PromptStorageManager.getPrompts();
+    const prompt = prompts.find(p => p.uuid === promptUuid);
+    if (!prompt || !toLang) return;
+    const fromLang = prompt.language || null;
+    const targetLabel = (window.PFLanguage && window.PFLanguage.languageMeta(toLang).label) || toLang;
+
+    let buffer = '';
+    let running = true;
+
+    const statusDiv = createEl('div', { className: 'opm-improving-status' });
+    statusDiv.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a73e8;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:100000;display:flex;align-items:center;gap:8px;';
+    statusDiv.appendChild(createEl('span', {}, [tt('panel_translating', null, 'Translating…')]));
+    const stopButton = createEl('button');
+    stopButton.style.cssText = 'background:rgba(255,255,255,0.3);border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;';
+    stopButton.textContent = tt('panel_stop', null, 'Stop');
+    statusDiv.appendChild(stopButton);
+
+    const stream = ollamaStream({ op: 'translate', promptText: prompt.content, toLang, fromLang });
+    stopButton.addEventListener('click', () => {
+      running = false;
+      stream.cancel();
+      statusDiv.remove();
+    });
+    document.body.appendChild(statusDiv);
+
+    try {
+      for await (const chunk of stream) {
+        if (!running) break;
+        buffer += chunk;
+      }
+    } finally {
+      statusDiv.remove();
+    }
+    if (!running || !buffer.trim()) return;
+    buffer = buffer.trim();
+
+    await PromptStorageManager.addVersion(promptUuid, buffer, 'ai_translation', { from: fromLang, to: toLang });
+    await PromptStorageManager._ps().then(ps => ps.updatePrompt(promptUuid, { content: buffer, language: toLang }));
+    if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+    _toast(tt('panel_translated', [targetLabel], `Translated to ${targetLabel}`), 'success');
+  } catch (e) {
+    if (!/abort/i.test(e.message || '')) {
+      console.error('Translate failed:', e);
+      _toast(tt('toast_translate_failed', [e.message], 'Translation failed: ' + e.message), 'error');
+    }
+  }
+}
+
+/**
+ * COMMENT: v3 feature D-VI — non-streaming full translation used by forks
+ * (the result becomes a NEW prompt, so there is no textarea to stream into).
+ * @param {string} promptText
+ * @param {string} toLang
+ * @param {string|null} fromLang
+ * @returns {Promise<string>}
+ */
+export async function translateText(promptText, toLang, fromLang = null) {
+  const stream = ollamaStream({ op: 'translate', promptText, toLang, fromLang });
+  let buffer = '';
+  for await (const chunk of stream) buffer += chunk;
+  return buffer.trim();
 }
 
 /**
@@ -221,7 +298,7 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
     const data = await chrome.storage.local.get({ autoSuggestMetadata: true });
     if (!data.autoSuggestMetadata) return;
 
-    const metadata = await ollamaRPC({ op: 'suggest', promptText: prompt.content });
+    const metadata = await ollamaRPC({ op: 'suggest', promptText: prompt.content, language: prompt.language });
     const updates = {};
     // COMMENT: Only fill fields the user left empty — never overwrite a
     // user-provided title/tags/category.
@@ -246,4 +323,4 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
 
 // COMMENT: Kept for backwards compatibility — content.js imports the named
 // ES exports above via dynamic import().
-window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata };
+window.PFAIOperations = { improvePrompt, generateVariants, autoSuggestMetadata, translatePrompt };

@@ -1,6 +1,7 @@
 import { getProviders } from './integration-manager.js';
 import { getPrompts, onPromptsChanged, savePrompt, bumpUseCount } from './promptStorage.js';
-import { checkConnection, improvePrompt, generateVariants, suggestAllMetadata } from './ollama-service.js';
+import { checkConnection, improvePrompt, generateVariants, suggestAllMetadata, translatePrompt } from './ollama-service.js';
+import { syncOllamaCorsRules } from './cors-rules.js';
 
 // ---------------------------
 // Install / Update / Startup
@@ -15,11 +16,22 @@ chrome.runtime.onInstalled.addListener(function (details) {
     rebuildProviderMap();
   }
   createPromptContextMenu();
+  // COMMENT: restored in 2.2.1 — Ollama 403s extension-origin requests;
+  // the rule (self-scoped) rewrites Origin to http://localhost.
+  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   createPromptContextMenu();
   rebuildProviderMap();
+  syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
+});
+
+// Keep the Origin-rewrite rule in sync with the configured Ollama URL.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.ollamaUrl) {
+    syncOllamaCorsRules().catch(e => console.error('CORS rule sync failed:', e));
+  }
 });
 
 async function rebuildProviderMap() {
@@ -73,8 +85,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       for (const provider of providers) {
         const originPattern = provider.origins[0];
         if (!originPattern) continue;
-        // Inject on ALL LLM sites regardless of permissions
-        // The content script will check permissions at runtime for injection vs clipboard
+        // COMMENT: Inject on all 19 LLM sites regardless of host permission —
+        // the panel is purely write-only (prompt injection); no site access
+        // beyond the page's own DOM is required.
         // COMMENT: Escape every regex metachar, then convert the escaped
         // wildcard back — the old escaper missed +, (, ?, etc.
         const regexPattern = originPattern
@@ -318,16 +331,26 @@ chrome.runtime.onConnect.addListener((port) => {
     const signal = controller.signal;
     try {
       if (op === 'improve') {
-        const gen = await improvePrompt(msg.promptText, { signal });
+        // COMMENT: msg.language (v3 feature D-II) carries the target language
+        // from the prompt being processed.
+        const gen = await improvePrompt(msg.promptText, { signal, language: msg.language });
+        for await (const chunk of gen) {
+          port.postMessage({ id, chunk });
+        }
+        port.postMessage({ id, done: true });
+      } else if (op === 'translate') {
+        // COMMENT: v3 feature D-V — msg.toLang is the target; msg.fromLang
+        // enables script-only conversion for zh-HK↔zh-CN.
+        const gen = await translatePrompt(msg.promptText, msg.toLang, { signal, fromLang: msg.fromLang });
         for await (const chunk of gen) {
           port.postMessage({ id, chunk });
         }
         port.postMessage({ id, done: true });
       } else if (op === 'variants') {
-        const variants = await generateVariants(msg.promptText, msg.count, { signal });
+        const variants = await generateVariants(msg.promptText, msg.count, { signal, language: msg.language });
         port.postMessage({ id, result: variants });
       } else if (op === 'suggest') {
-        const metadata = await suggestAllMetadata(msg.promptText);
+        const metadata = await suggestAllMetadata(msg.promptText, msg.language);
         port.postMessage({ id, result: metadata });
       } else if (op === 'check') {
         port.postMessage({ id, result: await checkConnection() });

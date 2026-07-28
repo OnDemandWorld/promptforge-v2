@@ -2,6 +2,7 @@
 import * as PromptStorage from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
 import { scheduleBackup } from './autoBackup.js';
+import { t } from './i18n.js';
 
 // ─── Status ───────────────────────────────────────────────────────────────
 async function initStatus() {
@@ -10,12 +11,14 @@ async function initStatus() {
     const dot = document.querySelector('#popup-status .status-dot');
     const text = document.getElementById('status-text');
     if (dot) dot.className = `status-dot ${result.connected ? 'connected' : 'disconnected'}`;
-    if (text) text.textContent = result.connected ? 'Ollama connected' : 'Not connected';
+    if (text) text.textContent = result.connected
+      ? t('popup_ollama_connected', null, 'Ollama connected')
+      : t('popup_not_connected', null, 'Not connected');
   } catch {
     const dot = document.querySelector('#popup-status .status-dot');
     const text = document.getElementById('status-text');
     if (dot) dot.className = 'status-dot disconnected';
-    if (text) text.textContent = 'Not connected';
+    if (text) text.textContent = t('popup_not_connected', null, 'Not connected');
   }
 }
 
@@ -44,7 +47,7 @@ async function loadPrompts() {
   if (prompts.length === 0) {
     const empty = document.createElement('div');
     empty.style.cssText = 'text-align:center;padding:24px;color:var(--color-text-secondary);font-size:13px;';
-    empty.textContent = 'No prompts found.';
+    empty.textContent = t('popup_no_prompts', null, 'No prompts found.');
     listEl.appendChild(empty);
     return;
   }
@@ -52,7 +55,7 @@ async function loadPrompts() {
   for (const p of prompts) {
     const item = document.createElement('div');
     item.className = 'popup-prompt-item';
-    const title = p.title || 'Untitled Prompt';
+    const title = p.title || t('untitled', null, 'Untitled Prompt');
     const snippet = (p.content || '').substring(0, 80);
 
     const h4 = document.createElement('h4');
@@ -68,11 +71,11 @@ async function loadPrompts() {
         await navigator.clipboard.writeText(p.content);
         await PromptStorage.bumpUseCount(p.uuid);
         scheduleBackup();
-        h4.textContent = 'Copied! ✓';
+        h4.textContent = t('popup_copied', null, 'Copied! ✓');
         h4.style.color = 'var(--color-success)';
         setTimeout(() => window.close(), 800);
       } catch (e) {
-        alert('Copy failed: ' + e.message);
+        alert(t('popup_copy_failed', [e.message], 'Copy failed: ' + e.message));
       }
     });
 

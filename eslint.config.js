@@ -69,6 +69,18 @@ export default [
     },
   },
   {
+    // COMMENT: the native messaging host is CommonJS (.cjs) with Node globals.
+    files: ['native-host/**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly', module: 'readonly', exports: 'writable',
+        process: 'readonly', Buffer: 'readonly', __dirname: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+  {
     // COMMENT: content.bundle.js is generated (npm run bundle); dist/ and
     // scripts/ are build artifacts/tooling.
     ignores: ['tests/**', '*.test.js', 'content.bundle.js', 'dist/**', 'scripts/**'],

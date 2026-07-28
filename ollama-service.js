@@ -5,6 +5,11 @@
 //
 // Default model: gemma4:latest
 
+import { languageDirective, LANGUAGE_NAMES } from './language.js';
+import { CATEGORIES, CATEGORY_NAMES } from './categories.js';
+
+export { CATEGORY_NAMES };
+
 // Single source of truth for Ollama defaults. Import from app.js /
 // service-worker.js instead of re-declaring the same literals.
 // NOTE: DEFAULTS.model is a last-resort fallback only (e.g. Ollama
@@ -55,23 +60,9 @@ async function getOllamaSettings() {
 // Meta-prompt constants
 // ---------------------------
 
-// Single source of truth for prompt categories. The category select in app.js,
-// cleanCategory() below, and CATEGORY_SYSTEM_PROMPT all derive from this —
-// adding a category is a one-line change instead of three edits.
-const CATEGORIES = [
-  { name: 'Writing & Content', description: 'blog posts, articles, stories, copywriting, content generation' },
-  { name: 'Coding & Development', description: 'code generation, debugging, code review, technical documentation' },
-  { name: 'Analysis & Research', description: 'summarization, research, fact-finding, comparison, synthesis' },
-  { name: 'Creative & Design', description: 'creative writing, brainstorming, design ideas, naming, visual concepts' },
-  { name: 'Business & Marketing', description: 'marketing copy, sales, strategy, branding, customer-facing content' },
-  { name: 'Education & Learning', description: 'explanations, tutorials, study aids, lesson plans, quizzes' },
-  { name: 'Data & Technical', description: 'data analysis, SQL, spreadsheets, technical specs, system design' },
-  { name: 'Communication & Email', description: 'emails, messages, letters, professional communication' },
-  { name: 'Productivity & Planning', description: 'task lists, planning, scheduling, project management, meeting notes' },
-  { name: 'Other', description: 'anything that does not clearly fit the above' }
-];
-// Category display names for UI consumers (app.js category select, sort, etc.).
-export const CATEGORY_NAMES = CATEGORIES.map(c => c.name);
+// Single source of truth for prompt categories moved to categories.js (C4):
+// canonical ids + English names. cleanCategory() below and
+// CATEGORY_SYSTEM_PROMPT still match on English names (model reliability).
 
 export const IMPROVE_SYSTEM_PROMPT = `You are an expert prompt engineer. You rewrite prompts to make them clearer, more specific, and more effective when given to a large language model.
 
@@ -92,7 +83,13 @@ Example:
 Input: write a blog post about dogs
 Output: Write a 600-word blog post for first-time dog owners about choosing a breed that matches their lifestyle. Use a warm, encouraging tone. Structure it with an introduction, three lifestyle-based recommendations (apartment, family, active), and a brief conclusion with next steps.`;
 
-export function makeVariantsSystemPrompt(count) {
+// COMMENT: v3 feature D-II — factory form appends the target-language
+// directive. The constant stays exported for backwards compatibility.
+export function makeImproveSystemPrompt(language = null) {
+  return IMPROVE_SYSTEM_PROMPT + languageDirective(language);
+}
+
+export function makeVariantsSystemPrompt(count, language = null) {
   return `You are an expert prompt engineer. You generate alternative versions of a given prompt that take genuinely different approaches while preserving the core goal.
 
 Each variant must differ meaningfully along at least two of these dimensions:
@@ -112,7 +109,7 @@ Output rules:
 
 Example:
 Input prompt: "explain photosynthesis"
-Output: ["You are a biology teacher. Explain photosynthesis to a 10-year-old using a simple analogy and three short paragraphs.", "Provide a technical explanation of photosynthesis covering the light-dependent reactions, the Calvin cycle, and the role of chlorophyll. Use precise terminology.", "Compare and contrast C3, C4, and CAM photosynthesis. Format as a table with columns for mechanism, climate adaptation, and example plants."]`;
+Output: ["You are a biology teacher. Explain photosynthesis to a 10-year-old using a simple analogy and three short paragraphs.", "Provide a technical explanation of photosynthesis covering the light-dependent reactions, the Calvin cycle, and the role of chlorophyll. Use precise terminology.", "Compare and contrast C3, C4, and CAM photosynthesis. Format as a table with columns for mechanism, climate adaptation, and example plants."]` + languageDirective(language);
 }
 
 export const TITLE_SYSTEM_PROMPT = `You generate short, descriptive titles for AI prompts.
@@ -135,6 +132,10 @@ Prompt: "Generate three subject line options for a cold sales email targeting Sa
 Title: Cold Email Subject Line Generator
 `;
 
+export function makeTitleSystemPrompt(language = null) {
+  return TITLE_SYSTEM_PROMPT + languageDirective(language);
+}
+
 export const TAGS_SYSTEM_PROMPT = `You assign tags to AI prompts.
 
 Given a prompt, you identify 2 to 5 relevant tags covering its topic, use-case, and domain. Tags are short (1-2 words), lowercase, and use hyphens for multi-word tags.
@@ -154,6 +155,16 @@ Tags: ["coding", "python", "code-review", "security"]
 Prompt: "Generate three subject line options for a cold sales email..."
 Tags: ["marketing", "email", "sales", "copywriting"]
 `;
+
+// COMMENT: v3 feature D-II — for non-English prompts, tags are requested in
+// the prompt's language (e.g. ["写作", "博客"] for zh). The hyphen/lowercase
+// convention only applies to Latin-script tags.
+export function makeTagsSystemPrompt(language = null) {
+  const localized = (language && language !== 'en')
+    ? '\n\nFor non-English prompts, write tags in the prompt\'s language (native script). Keep them short (1-2 words). Do not use hyphens or lowercasing rules for non-Latin tags.'
+    : '';
+  return TAGS_SYSTEM_PROMPT + localized + languageDirective(language);
+}
 
 export const CATEGORY_SYSTEM_PROMPT = `You classify AI prompts into exactly one of these categories:
 
@@ -413,6 +424,51 @@ export async function checkConnection() {
   }
 }
 
+// v3 feature D-V — translation / script conversion.
+const ZH_SCRIPT_LANGS = new Set(['zh-HK', 'zh-CN']);
+
+export function makeTranslateSystemPrompt(toLang, fromLang = null) {
+  const target = LANGUAGE_NAMES[toLang] || toLang;
+  // zh-HK ↔ zh-CN is one language in two written forms — convert script and
+  // regional terminology ONLY; never let the model rephrase (it loves to).
+  const scriptOnly = !!fromLang && fromLang !== toLang
+    && ZH_SCRIPT_LANGS.has(fromLang) && ZH_SCRIPT_LANGS.has(toLang);
+  if (scriptOnly) {
+    return `You convert Chinese text between written forms. Convert the prompt below to ${target}.
+
+Strict rules:
+- Convert characters and regional terminology to the target written form ONLY.
+- Do NOT rephrase, summarize, expand, or improve the wording — preserve every sentence structure and word choice exactly.
+- Keep #variables#, code blocks, URLs, and proper nouns unchanged.
+- Output only the converted prompt — no preamble, no explanation, no quotes.`;
+  }
+  const source = fromLang ? ` The prompt is written in ${LANGUAGE_NAMES[fromLang] || fromLang}.` : '';
+  return `You are an expert translator for AI prompts.${source} Translate the prompt below into ${target}.
+
+Rules:
+- Preserve the original intent, structure, tone, and formatting exactly.
+- Keep #variables#, code blocks, URLs, and proper nouns untranslated.
+- Use natural, idiomatic ${target} phrasing for instructions.
+- Output only the translated prompt — no preamble, no explanation, no quotes.`;
+}
+
+/**
+ * Streaming translation. options.fromLang enables script-only mode for
+ * zh-HK↔zh-CN and sharpens the source-side instruction otherwise.
+ */
+export async function* translatePrompt(promptText, toLang, options = {}) {
+  const userMessage = `Translate this prompt:
+
+<prompt>
+${promptText}
+</prompt>
+
+Return only the translated prompt.`;
+  yield* await ollamaChat(makeTranslateSystemPrompt(toLang, options.fromLang || null), userMessage, {
+    temperature: 0.3, maxTokens: 2048, timeout: 90000, stream: true, think: false, signal: options.signal
+  });
+}
+
 export async function* improvePrompt(promptText, options = {}) {
   const userMessage = `Rewrite this prompt to be clearer and more effective:
 
@@ -421,7 +477,9 @@ ${promptText}
 </prompt>
 
 Return only the rewritten prompt.`;
-  yield* await ollamaChat(IMPROVE_SYSTEM_PROMPT, userMessage, {
+  // COMMENT: v3 feature D-II — system prompt carries the target-language
+  // directive when the prompt has a known language.
+  yield* await ollamaChat(makeImproveSystemPrompt(options.language), userMessage, {
     temperature: 0.7, maxTokens: 2048, timeout: 90000, stream: true, think: true, signal: options.signal
   });
 }
@@ -437,7 +495,7 @@ ${promptText}
 </prompt>
 
 Return only a JSON array of ${clampedCount} strings.`;
-  const raw = await ollamaChat(makeVariantsSystemPrompt(clampedCount), userMessage, {
+  const raw = await ollamaChat(makeVariantsSystemPrompt(clampedCount, options.language), userMessage, {
     temperature: 0.9, maxTokens: 4096, timeout: 120000, stream: false, think: useThinkingSetting, signal: options.signal
   });
 
@@ -454,8 +512,8 @@ Return only a JSON array of ${clampedCount} strings.`;
   throw new Error('Model returned no usable variants');
 }
 
-export async function suggestTitle(promptText) {
-  const raw = await ollamaChat(TITLE_SYSTEM_PROMPT,
+export async function suggestTitle(promptText, language = null) {
+  const raw = await ollamaChat(makeTitleSystemPrompt(language),
 `Read the prompt below and produce a 3-7 word title that captures its core task.
 
 <prompt>
@@ -468,8 +526,8 @@ Return only the title.`, {
   return cleanTitle(raw);
 }
 
-export async function suggestTags(promptText) {
-  const raw = await ollamaChat(TAGS_SYSTEM_PROMPT,
+export async function suggestTags(promptText, language = null) {
+  const raw = await ollamaChat(makeTagsSystemPrompt(language),
 `Read the prompt below and assign 2 to 5 lowercase tags.
 
 <prompt>
@@ -496,7 +554,9 @@ Return only a JSON array.`, {
     .map(t => t.replace(/[{}[\]/\\<>"':|=+!@#$%^&*~`()-]/g, ''))
     .map(t => t.replace(/^(json|markdown|code\s*block|example|here|is|the|of|and|a)\s*/gi, ''))
     .map(t => t.replace(/\s+/g, '-'))  // collapse whitespace to hyphens
-    .filter(t => t.length >= 2 && t.length <= 25 && /^[a-z0-9-]+$/.test(t))
+    // COMMENT: v3 feature D-II — Unicode-aware so CJK tags survive the
+    // fallback path (the old ASCII-only regex discarded all non-Latin tags).
+    .filter(t => t.length >= 2 && t.length <= 25 && /^[\p{L}\p{N}_-]+$/u.test(t))
     .slice(0, 5);
 
   return tags.length > 0 ? tags : ['untagged'];
@@ -516,10 +576,10 @@ Return only the category name.`, {
   return cleanCategory(raw);
 }
 
-export async function suggestAllMetadata(promptText) {
+export async function suggestAllMetadata(promptText, language = null) {
   const [titleResult, tagsResult, categoryResult] = await Promise.allSettled([
-    suggestTitle(promptText),
-    suggestTags(promptText),
+    suggestTitle(promptText, language),
+    suggestTags(promptText, language),
     suggestCategory(promptText)
   ]);
 

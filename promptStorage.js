@@ -7,11 +7,13 @@
 // Added: version history (versions array on each prompt)
 
 import { generateUUID } from './utils.js';
+import { normalizeLangCode } from './language.js';
+import { canonicalCategoryId } from './categories.js';
 
 // ---------------------------
 // Constants & helpers
 // ---------------------------
-export const PROMPT_STORAGE_VERSION = 3;            // v3 adds versions array
+export const PROMPT_STORAGE_VERSION = 5;            // v5 adds `groupId` (language-linked forks); v4 added `language`; v3 added versions
 const STORAGE_KEY = 'prompts_storage';
 const LEGACY_KEY  = 'prompts';
 // COMMENT: Cap per-prompt version history so the whole-store rewrite on every
@@ -24,7 +26,7 @@ const MAX_VERSIONS_PER_PROMPT = 100;
 const KNOWN_PROMPT_KEYS = new Set([
   'id', 'uuid', 'title', 'content', 'createdAt', 'updatedAt', 'tags',
   'folderId', 'category', 'categoryId', 'favorite', '_archived',
-  'useCount', 'lastUsedAt', 'versions'
+  'useCount', 'lastUsedAt', 'versions', 'language', 'groupId'
 ]);
 
 function storageGet(keys) {
@@ -63,12 +65,17 @@ function normalisePrompt(p = {}) {
   }
   // folderId (kept for compatibility, flat categories preferred)
   out.folderId = typeof p.folderId === 'string' && p.folderId.length > 0 ? p.folderId : null;
+  // language: BCP-47 code (en, zh-HK, zh-CN, …) or null when unknown.
+  // v3 feature D — lazy migration: old prompts simply have null until set.
+  out.language = p.language ? normalizeLangCode(p.language) : null;
+  // groupId: shared uuid linking translations forked from the same prompt
+  // (v3 feature D-VI); null for standalone prompts.
+  out.groupId = typeof p.groupId === 'string' && p.groupId.length > 0 ? p.groupId : null;
   // category: the display-name string used by the UI
   out.category = typeof p.category === 'string' && p.category.length > 0 ? p.category : null;
-  // categoryId: legacy/ID reference (mapped from category if not provided)
-  out.categoryId = typeof p.categoryId === 'string' && p.categoryId.length > 0
-    ? p.categoryId
-    : (typeof p.category === 'string' && p.category.length > 0 ? p.category : null);
+  // C4: canonical category id — accepts a legacy id or a category name and
+  // normalises to the stable id (null when unknown/custom).
+  out.categoryId = canonicalCategoryId(p.categoryId) || canonicalCategoryId(p.category) || null;
   // State fields that must survive normalisation (previously stripped on every
   // read+write, which silently broke favorites, archive, use-counts and sorts).
   if (typeof p.favorite === 'boolean') out.favorite = p.favorite;
@@ -204,7 +211,7 @@ export async function setPrompts(prompts) {
   });
 }
 
-export async function savePrompt({ title, content, uuid, tags = [], folderId = null, categoryId = null, category = null }) {
+export async function savePrompt({ title, content, uuid, tags = [], folderId = null, categoryId = null, category = null, language = null, groupId = null }) {
   return withLock(async () => {
     if (!title && !content) throw new Error('Title or content is required');
     const prompts = await getPrompts();
@@ -217,12 +224,13 @@ export async function savePrompt({ title, content, uuid, tags = [], folderId = n
         ...prompts[existingIdx],
         title, content, tags, folderId,
         categoryId: categoryId || category,
+        language, groupId,
         updatedAt: new Date().toISOString()
       });
       await writeStorage(prompts);
       return { success: true, prompt: prompts[existingIdx] };
     }
-    const prompt = normalisePrompt({ uuid, title, content, tags, folderId, categoryId: categoryId || category });
+    const prompt = normalisePrompt({ uuid, title, content, tags, folderId, categoryId: categoryId || category, language, groupId });
     // Seed version if not already set
     if (prompt.versions.length === 0 && prompt.content) {
       prompt.versions.push({

@@ -14,7 +14,7 @@ or **Developer Tools** (if leaning into the coding-prompt angle). Avoid
 ## Short description (132-char limit)
 
 ```
-Manage, version, and reuse AI prompts across 19 LLM sites. Local-first; Ollama works without OLLAMA_ORIGINS.
+Manage, version, translate & reuse AI prompts (EN/繁/简) across 19 LLM sites. Local-first, with optional folder sync.
 ```
 
 ---
@@ -37,11 +37,23 @@ ORGANIZE YOUR PROMPTS
 • Variables: use #variable# syntax and a form appears when you send
 • Version history: every edit is saved; restore any past version
 • Export / import JSON backups (with UUID-based merge or replace)
-• Optional file-based auto-backup for cross-computer sync via iCloud/Dropbox folders
+• Optional file-based auto-backup
+
+MULTILINGUAL PROMPTS (EN / 繁體中文 / 简体中文)
+• Every prompt carries a language — auto-detected offline (including Traditional vs Simplified), or set by you
+• Translate a prompt into another language with one click (繁⇄简 converts script only, without rephrasing)
+• Fork a prompt into language-linked groups: EN · 简 · 繁 chips jump between your translations
+• Library filter and badges by language; the whole UI is localized in English, 繁體中文, and 简体中文
+
+FOLDER SYNC (BRING YOUR OWN CLOUD)
+• Point PromptForge at any folder — iCloud Drive, Dropbox, Box, OneDrive — and your library syncs through a single JSON file
+• Three-way merge with conflict resolution and deletion tracking; nothing ever touches a third-party server
+• Works in Chrome and Edge via the browser folder API, and in Brave via an optional one-time native helper (open source, installed locally)
 
 AI FEATURES (OLLAMA — LOCAL OR CLOUD)
-• Improve with AI: streams an improved rewrite into the editor in real time
+• Improve with AI: streams an improved rewrite into the editor in real time — in the prompt's language
 • Generate Variants: creates 2–5 meaningfully different versions
+• Translate / Fork: language-aware translation and language-group forking
 • Auto-suggest Metadata: suggests title, tags, and category on first save
 • Suggest (✨): re-run metadata suggestions on any existing prompt
 • Thinking Mode toggle for Gemma reasoning models
@@ -50,7 +62,7 @@ NO OLLAMA ORIGINS SETUP NEEDED
 Running a local Ollama? Just start it with `ollama serve`. PromptForge rewrites the request origin automatically, so you do not need to set OLLAMA_ORIGINS or restart Ollama with special flags. For cloud, point the URL at https://ollama.com and add your API key.
 
 PRIVACY-FIRST BY DESIGN
-• All prompt data stays in chrome.storage.local on your device — never sent to any server
+• All prompt data stays on your device — never sent to any server. Sync, if you enable it, writes to a folder YOU choose (your own iCloud/Dropbox/Box/OneDrive)
 • Content scripts only write into input boxes; they never read page content
 • Direct injection into AI sites is opt-in, granted per provider through Chrome's optional host permissions
 • Clipboard fallback works everywhere with zero permissions at install
@@ -61,7 +73,8 @@ PERMISSIONS, EXPLAINED
 • tabs, scripting — show the floating panel on AI sites and send prompts into their input boxes (opt-in per site)
 • contextMenus, notifications — "Save as prompt" from selected text and "send prompt" right-click menu
 • downloads — optional file-based backup and JSON export
-• declarativeNetRequest — rewrites the Origin header on requests to your configured Ollama host only, so local Ollama accepts the request without OLLAMA_ORIGINS. Scoped to this extension and supported AI sites; it does not touch any other traffic.
+• declarativeNetRequest — rewrites the Origin header on the extension's OWN requests to your configured Ollama host only, so local Ollama accepts them without OLLAMA_ORIGINS. It does not touch any other traffic.
+• nativeMessaging — talks to an optional, open-source local helper YOU install, for folder sync in browsers that block the web folder API (e.g. Brave). Does nothing unless you set it up.
 
 Built on Open Prompt Manager by Jonathan Bertholet (MIT). AI features, full-page UI, and site-injection enhancements by the ODW Team.
 ```
@@ -82,20 +95,31 @@ Manage and reuse AI prompts across LLM provider sites, with optional local AI as
 • contextMenus — "Save as prompt" from selected text and a "send prompt" right-click menu.
 • notifications — confirm when a prompt is saved, copied, or sent.
 • downloads — optional file-based backup and JSON export of the user's library.
-• declarativeNetRequest — rewrites the Origin header on requests to the user's configured Ollama host only (so local Ollama accepts them without OLLAMA_ORIGINS). The rule is scoped via initiatorDomains to this extension and the supported AI-site hosts; it does not inspect, read, or modify any other traffic, and no page content is read.
+• declarativeNetRequest — rewrites the Origin header on the extension's own requests to the user's configured Ollama host only (so local Ollama accepts them without OLLAMA_ORIGINS). The rule is scoped via initiatorDomains to the extension's own id; it does not inspect, read, or modify any other traffic, and no page content is read.
+• nativeMessaging — communicates only with the optional open-source sync helper the user installs themselves (native-host/ in the package), used for folder sync in browsers that block the File System Access API. Inactive unless configured.
 ```
 
 ---
 
-## What's new in this version (v2.1.0)
+## What's new in this version (v3.0.0)
 
 ```
-• Local Ollama now works without OLLAMA_ORIGINS — the extension rewrites the request origin for you.
-• Fixed: favorites, archive, and use-counts were not persisting — they now survive across reloads.
-• New: an AI processing indicator (spinner + label) in the editor while Ollama is working.
-• Fixed: "Import (Replace)" no longer wipes your Ollama/theme/backup settings.
-• Fixed: the model name in the top-right status stays in sync with the selected model.
-• Tightened permissions and privacy posture (scoped CORS rule, trimmed web-accessible resources, dropped an unused permission).
+NEW — MULTILINGUAL PROMPTS
+• Per-prompt language (English / 繁體中文 / 简体中文) with offline auto-detection, library filter, and badges.
+• Translate button: translate a prompt in one click; 繁⇄简 converts script only, without rephrasing.
+• Fork ▾: duplicate a prompt or fork a translated sibling; linked groups show clickable EN · 简 · 繁 chips.
+• Full UI localization: English, 繁體中文, 简体中文 (follows your browser language).
+• AI features (Improve, Variants, suggestions) now work in the prompt's language.
+
+NEW — FOLDER SYNC
+• Sync your library through a JSON file in any cloud-synced folder (iCloud Drive, Dropbox, Box, OneDrive).
+• Three-way merge with conflict resolution and deletion tracking; works across machines.
+• Brave support via an optional one-time native helper (Brave blocks the browser folder API).
+
+ALSO
+• AI calls now run through the extension's service worker with tighter Origin handling.
+• Bundled content scripts (faster, more reliable injection).
+• Many bug fixes — see CHANGELOG.md for the full list.
 ```
 
 See CHANGELOG.md for the full list.
@@ -105,6 +129,6 @@ See CHANGELOG.md for the full list.
 ## Assets still needed in the dashboard
 
 - **Store icon (128×128):** use `icons/icon128.png` (included in the package).
-- **Screenshots (1280×800 or 640×400, 1–5):** suggested shots — full-page library; editor with the AI processing indicator visible; version-history restore; floating panel on an AI site.
+- **Screenshots (1280×800 or 640×400, 1–5):** suggested shots — full-page library with language badges + EN/简/繁 chips; editor with the Translate/Fork buttons; the Languages settings section; Folder Sync settings; floating panel on an AI site (ideally one showing the UI in 中文).
 - **Promotional tile (440×280):** optional.
-- **Privacy practice disclosure:** state that no personal/sensitive data is collected or transmitted; all prompt data is stored locally; AI features route through the user's own Ollama.
+- **Privacy practice disclosure:** state that no personal/sensitive data is collected or transmitted; all prompt data is stored locally; sync (optional) writes only to a user-chosen folder on their own cloud storage; AI features route through the user's own Ollama.
