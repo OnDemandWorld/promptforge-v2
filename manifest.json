@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "__MSG_extName__",
     "default_locale": "en",
-    "version": "3.0.0",
+    "version": "3.1.0",
     "description": "__MSG_extDescription__",
     "permissions": [
         "storage",
@@ -62,7 +62,7 @@
                 "*://www.perplexity.ai/*",
                 "*://www.genspark.ai/*",
                 "*://poe.com/*",
-                "*://github.com/copilot*",
+                "*://github.com/*",
                 "*://www.kimi.com/*",
                 "*://chat.mistral.ai/*",
                 "*://platform.openai.com/*",
@@ -71,7 +71,7 @@
                 "*://lmarena.ai/*",
                 "*://chat.qwen.ai/*",
                 "*://notebooklm.google.com/*",
-                "*://apps.abacus.ai/chatllm*"
+                "*://apps.abacus.ai/*"
             ]
         }
     ],

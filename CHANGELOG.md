@@ -4,6 +4,39 @@ All notable changes to PromptForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] - 2026-11-24
+
+### Security & reliability — full-repository audit
+
+Resolved 77 findings from a full code audit (see `.ocr-reports/`).
+
+### Fixed
+
+- **Data loss:** Import (Replace) parses and validates the file *before* wiping the library, with rollback on failure; unsaved editor changes prompt before navigation/tab close; folder sync no longer resurrects deleted prompts (shadow refreshed every cycle), clobber edits made mid-cycle (locked re-merge), or overwrite a newer remote file (mtime check).
+- **Prompt injection:** OpenRouter's text `<input>` is now injected (previously "Unknown input box type"); React-controlled textareas use the native prototype value setter so `onChange` fires (DeepSeek/Poe/GitHub Copilot/LMArena/Qwen).
+- **Panel:** tags-enabled edit no longer saves the language as the category; language fork uses a static import (the dynamic import of a non-web-accessible file rejected); Improve/Translate no longer wipe an open edit form; double-submit, stale-mount, drag, and tag-portal races guarded.
+- **AI:** Improve honors the Thinking Mode setting; mid-stream Ollama errors surface instead of saving truncated output; metadata suggestions are cancellable; port disconnect settles pending requests; timeouts are distinguished from user Stop.
+- **Backup:** auto-backup writes a deterministic Downloads path and waits for completion (no premature blob revoke or silent failures); popup backup completes before the popup closes.
+- **Native host:** 1 MB reply guard (large libraries no longer kill the host); failed writes clean up temp files; installers validate the extension ID and write UTF-8 (no-BOM) manifests.
+- **Release packaging:** the zip no longer includes development artifacts (session transcripts, internal reports).
+
+### Changed
+
+- **CORS fails closed:** if the self-scoped Ollama Origin rule cannot be installed, AI features disable rather than falling back to an unscoped rule.
+- **Site matching is host-anchored:** a provider URL embedded in another site's query string no longer matches.
+- Library writes use locked read-modify-write APIs (`transact`/`reorderPrompts`/`removeTagEverywhere`); sync settings patches are serialized.
+- ESLint ignore patterns corrected; many error-handling and i18n cleanups.
+
+### Added
+
+- Test suite (`tests/`, 25 tests) covering sync merge, storage transactions, injection, URL matching, and language detection.
+- Privacy policy (`PRIVACY.md`) and rewritten Chrome Web Store listing copy (`store-listing.md`).
+
+### Notes
+
+- `web_accessible_resources` matches remain **origin-only**: Chrome rejects path-containing WAR match patterns (see 3.0.0). An audit suggestion to narrow them to provider paths was reverted to keep the manifest loadable; injection targeting still uses path-scoped patterns in `llm_providers.json`.
+- Two architectural items deferred with rationale: cross-context single-writer for storage (#3) and write-path de-duplication (#19).
+
 ## [3.0.0] - 2026-07-28
 
 ### Fixed

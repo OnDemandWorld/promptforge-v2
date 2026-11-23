@@ -140,7 +140,7 @@ Data handled: user-generated prompt content (stored locally; optionally synced t
 
 ---
 
-## What's new (version notes — v3.0.0)
+## What's new (version notes — v3.1.0)
 
 ```
 NEW — MULTILINGUAL PROMPTS

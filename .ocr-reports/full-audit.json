@@ -752,8 +752,8 @@
     "root_cause": "promptStorage.js, utils.js, language.js, categories.js are web_accessible to every provider page, letting any script on those sites import extension code (fingerprinting / unnecessary attack surface). The GitHub match is '*://github.com/*' (line 65) while the provider pattern is only '*://github.com/copilot/*', broadening exposure to all of github.com.",
     "suggested_fix": "Restrict WAR matches to the exact provider patterns (github.com/copilot/*), and expose only the modules truly required for content-script dynamic import; keep storage logic out of page-reachable resources where possible.",
     "failure_scenario": "Any third-party script running on github.com (not just /copilot) can load chrome-extension://<id>/promptStorage.js and enumerate extension internals; the module is reachable far beyond the intended Copilot surface.",
-    "status": "fixed",
-    "verification_notes": "npm run lint → exit 0 (0 errors; 28 genuine pre-existing warnings). manifest.json WAR matches narrowed: github.com/* → github.com/copilot*, apps.abacus.ai/* → apps.abacus.ai/chatllm* (match provider patterns). JSON validated."
+    "status": "reverted",
+    "verification_notes": "REVERTED to keep the manifest loadable. Narrowing WAR matches to provider paths (*://github.com/copilot*) reintroduced the 3.0.0 bug: Chrome rejects path-containing web_accessible_resources.matches (Invalid match pattern → extension fails to load). WAR matches restored to origin-only (*://github.com/*, *://apps.abacus.ai/*). Injection targeting still uses path-scoped patterns in llm_providers.json. The site-wide WAR exposure is inherent to Chrome origin-only WAR constraint; cannot be narrowed via matches."
   },
   {
     "id": 55,

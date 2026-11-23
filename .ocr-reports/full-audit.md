@@ -43,7 +43,7 @@
 |----------|-------|---------|------|
 | High | 10 | 1 (#3) | 0 |
 | Medium | 40 | 1 (#19) | 0 |
-| Low | 27 | 0 | 0 |
+| Low | 26 | 0 | 1 (#54 reverted) |
 
 **Skipped (architectural, documented in JSON):**
 - **#3** — cross-context single-writer for `prompts_storage`: requires routing all writes through one owner or a storage advisory lock; chrome.storage.local has no atomic CAS, so a safe minimal fix isn't feasible without refactoring every caller. Partially mitigated by #6 (transact) and #36 (locked reorder/tag APIs).
@@ -51,7 +51,7 @@
 
 **Regression tests added** (tests/): syncEngine mergeAll deletion/shadow (#5), inputBoxHandler native-setter + <input> (#7/#8), promptStorage transact + reorder/tag (#6/#36), integrationManager retry (#16), urlMatchesPattern (#17), detectLanguage confidence (#22).
 
-**Remaining open items:** none — all High, Medium, and Low findings are addressed (77 fixed, 2 architectural skips: #3, #19).
+**Remaining open items:** none — all High, Medium, and Low findings are addressed (76 fixed, 2 architectural skips (#3, #19), 1 reverted (#54 — Chrome WAR origin-only constraint)).
 
 ### Dominant themes
 
@@ -188,7 +188,7 @@
 ## Low severity (27)
 
 - [x] **#53 — Import/merge toasts report total library size as "imported N"** — `app.js:1785-1788` (also 1746-1748; `autoBackup.js:196-197`) · bug. Return a real delta from the import API.
-- [x] **#54 — WAR exposes storage modules to all provider origins; GitHub matched site-wide** — `manifest.json:43-76` · security. Restrict matches to exact provider patterns (`github.com/copilot/*`); minimise page-reachable modules.
+- [~] **#54 — (REVERTED — Chrome requires origin-only WAR matches; see JSON) WAR exposes storage modules to all provider origins; GitHub matched site-wide** — `manifest.json:43-76` · security. Restrict matches to exact provider patterns (`github.com/copilot/*`); minimise page-reachable modules.
 - [x] **#55 — `savePrompt` upsert resets tags/folderId/language/groupId when omitted** — `promptStorage.js:222-231` · bug. Latent API trap; only override provided fields or document create-only.
 - [x] **#56 — `restoreVersion` reads versions outside the write lock (TOCTOU)** — `promptStorage.js:357-365` · concurrency. Resolve the version inside the same `withLock`.
 - [x] **#57 — `suggestTags` fallback strips hyphens (`code-review` → `codereview`)** — `ollama-service.js:554-556` · bug. Remove `-` from the stripped character class.
