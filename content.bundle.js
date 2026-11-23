@@ -195,10 +195,10 @@
       right: 0;
       padding: 10px;
       border-radius: var(--border-radius);
-      display: none;
       width: 280px;
       z-index: 10000;
       opacity: 0;
+      pointer-events: none; /* #45 \u2014 invisible (opacity:0) panel must not intercept host-page clicks */
       transform: translateY(10px);
       transition: opacity var(--transition-speed) ease, transform var(--transition-speed) ease;
       backdrop-filter: blur(12px);
@@ -223,6 +223,7 @@
     #${SELECTORS2.ROOT} .opm-prompt-list.opm-visible {
       opacity: 1;
       transform: translateY(0);
+      pointer-events: auto; /* #45 \u2014 re-enable interaction only when visible */
     }
     #${SELECTORS2.ROOT} .opm-prompt-list.opm-light {
       background-color: var(--light-bg);
@@ -636,6 +637,7 @@
 
   // inputBoxHandler.js
   var _providersCache = null;
+  var _shadowInputCache = /* @__PURE__ */ new Map();
   async function loadProviders() {
     if (_providersCache) return _providersCache;
     try {
@@ -680,13 +682,23 @@
      * Search for an element in all shadow DOMs, recursing to any depth.
      */
     static _findInShadowDom(selector, root = document) {
+      if (root === document) {
+        const cached = _shadowInputCache.get(selector);
+        if (cached && cached.isConnected && cached.matches(selector)) return cached;
+      }
       const hosts = root.querySelectorAll("*");
       for (const el of hosts) {
         if (!el.shadowRoot) continue;
         const found = el.shadowRoot.querySelector(selector);
-        if (found) return found;
+        if (found) {
+          if (root === document) _shadowInputCache.set(selector, found);
+          return found;
+        }
         const deep = _InputBoxHandler._findInShadowDom(selector, el.shadowRoot);
-        if (deep) return deep;
+        if (deep) {
+          if (root === document) _shadowInputCache.set(selector, deep);
+          return deep;
+        }
       }
       return null;
     }
@@ -900,19 +912,26 @@
             inputBox.innerText = content + "  ";
             inputBox.dispatchEvent(new Event("input", { bubbles: true }));
           }
-        } else if (inputBox.tagName.toLowerCase() === "textarea") {
+        } else if (inputBox.tagName.toLowerCase() === "textarea" || inputBox.tagName.toLowerCase() === "input") {
+          const tag = inputBox.tagName.toLowerCase();
+          const proto = tag === "textarea" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value").set;
+          let newValue;
           if (disableOverwrite) {
             const existing = inputBox.value || "";
             const needsSpace = existing && !/\s$/.test(existing);
             const spacer = needsSpace ? " " : "";
-            inputBox.value = existing + spacer + content + "  ";
+            newValue = existing + spacer + content + "  ";
           } else {
-            inputBox.value = content + "  ";
+            newValue = content + "  ";
           }
+          nativeSetter.call(inputBox, newValue);
           inputBox.dispatchEvent(new Event("input", { bubbles: true }));
           inputBox.dispatchEvent(new Event("change", { bubbles: true }));
-          inputBox.style.height = "auto";
-          inputBox.style.height = `${inputBox.scrollHeight}px`;
+          if (tag === "textarea") {
+            inputBox.style.height = "auto";
+            inputBox.style.height = `${inputBox.scrollHeight}px`;
+          }
         } else {
           console.error("Unknown input box type.", { inputBox });
           return;
@@ -1041,6 +1060,9 @@
           };
           const mountSuggestionsPortal = () => {
             const root = document.getElementById(SELECTORS3.ROOT) || document.body;
+            root.querySelectorAll(".opm-tag-suggestions").forEach((n) => {
+              if (n !== suggestions) n.remove();
+            });
             if (suggestions.parentElement !== root) root.appendChild(suggestions);
             suggestions.style.position = "fixed";
             suggestions.style.zIndex = "100000";
@@ -1378,7 +1400,9 @@
               document.body.style.cursor = "";
               document.removeEventListener("mousemove", handleMouseMove);
               document.removeEventListener("mouseup", handleMouseUp);
+              window.removeEventListener("blur", handleBlur);
             };
+            const handleBlur = () => cleanup();
             const handleMouseMove = (e) => {
               if (!isDragging || !ghost) return;
               e.preventDefault();
@@ -1421,6 +1445,10 @@
             };
             const handleMouseUp = (e) => {
               if (!isDragging) return;
+              if (dragSrcEl && !dragSrcEl.isConnected) {
+                cleanup();
+                return;
+              }
               const items = getListItems();
               const newOrderIndices = items.map((item) => parseInt(item.dataset.index, 10));
               cleanup();
@@ -1472,6 +1500,7 @@
                 handle.style.cursor = "grabbing";
                 document.addEventListener("mousemove", handleMouseMove);
                 document.addEventListener("mouseup", handleMouseUp);
+                window.addEventListener("blur", handleBlur);
               });
             };
             return { wireItem };
@@ -1536,7 +1565,8 @@
                 if (window.PromptUIManager?.state?.listMode === "edit") {
                   window.PromptUIManager.requestListRefreshSuppression?.();
                 }
-                await window.PromptStorageManager.setPrompts(newPrompts);
+                const ps = await window.PromptStorageManager._ps();
+                await ps.reorderPrompts(newPrompts.map((p) => p.uuid));
               }
             );
             prompts.forEach((p, idx) => {
@@ -1623,11 +1653,14 @@
                 alert(tt2("panel_fill_both", null, "Please fill in both title and content."));
                 return;
               }
+              if (saveBtn.disabled) return;
+              saveBtn.disabled = true;
               const tags = enableTags && tagInput ? tagInput.getTags() : [];
               const cat = catSelect.value || null;
               const language = langSelect.value === "auto" ? window.PFLanguage ? window.PFLanguage.detectLanguage(c).code : null : langSelect.value;
               const res = await window.PromptStorageManager.savePrompt({ title: t2, content: c, tags, category: cat, language });
               if (!res.success) {
+                saveBtn.disabled = false;
                 alert(tt2("panel_save_error", null, "Error saving prompt."));
                 return;
               }
@@ -1878,12 +1911,8 @@
                       e.stopPropagation();
                       if (!confirm(tt2("panel_remove_tag_confirm", [tag], `Remove tag "${tag}" from all prompts?`))) return;
                       try {
-                        const prompts = await window.PromptStorageManager.getPrompts();
-                        const updated = prompts.map((p) => {
-                          const nextTags = Array.isArray(p.tags) ? p.tags.filter((t2) => t2 !== tag) : [];
-                          return { ...p, tags: nextTags };
-                        });
-                        await window.PromptStorageManager.setPrompts(updated);
+                        const ps = await window.PromptStorageManager._ps();
+                        const updated = await ps.removeTagEverywhere(tag);
                         counts = await TagService2.getCounts(updated);
                         finalOrder = finalOrder.filter((t2) => t2 !== tag);
                         await window.PromptStorageManager.saveTagsOrder(finalOrder);
@@ -1920,7 +1949,7 @@
                 Behaviors.hideList(listEl);
                 State.closeTimer = null;
               }
-            }, window.PROMPT_CLOSE_DELAY || 1e4);
+            }, window.PROMPT_CLOSE_DELAY || 1e3);
           },
           cancelCloseTimer() {
             if (State.closeTimer) clearTimeout(State.closeTimer);
@@ -1969,11 +1998,14 @@
   // ai-operations.js
   var _aiPort = null;
   var _aiReqId = 0;
+  var _pendingCleanups = /* @__PURE__ */ new Set();
   function aiPort() {
     if (!_aiPort) {
       _aiPort = chrome.runtime.connect({ name: "pf-ai" });
       _aiPort.onDisconnect.addListener(() => {
         _aiPort = null;
+        for (const cleanup of [..._pendingCleanups]) cleanup();
+        _pendingCleanups.clear();
       });
     }
     return _aiPort;
@@ -1982,16 +2014,23 @@
     return new Promise((resolve, reject) => {
       const port = aiPort();
       const id = ++_aiReqId;
+      const cleanup = () => {
+        port.onMessage.removeListener(onMessage);
+        reject(new Error("AI port disconnected"));
+      };
       const onMessage = (msg) => {
         if (!msg || msg.id !== id) return;
         if (msg.error !== void 0) {
+          _pendingCleanups.delete(cleanup);
           port.onMessage.removeListener(onMessage);
           reject(new Error(msg.error));
         } else if ("result" in msg) {
+          _pendingCleanups.delete(cleanup);
           port.onMessage.removeListener(onMessage);
           resolve(msg.result);
         }
       };
+      _pendingCleanups.add(cleanup);
       port.onMessage.addListener(onMessage);
       port.postMessage({ id, ...message });
     });
@@ -2014,6 +2053,16 @@
         r();
       }
     };
+    const cleanup = () => {
+      error = new Error("AI port disconnected");
+      done = true;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r();
+      }
+    };
+    _pendingCleanups.add(cleanup);
     port.onMessage.addListener(onMessage);
     port.postMessage({ id, ...message });
     const gen = (async function* () {
@@ -2032,6 +2081,7 @@
           });
         }
       } finally {
+        _pendingCleanups.delete(cleanup);
         port.onMessage.removeListener(onMessage);
       }
     })();
@@ -2095,7 +2145,7 @@
       if (buffer) {
         await PromptStorageManager.addVersion(promptUuid, buffer, "ai_improvement");
         await PromptStorageManager._ps().then((ps) => ps.updatePrompt(promptUuid, { content: buffer }));
-        if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+        if (listEl && PromptUIManager.state.listMode !== "edit") PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
         _toast(tt("panel_improved", null, "Prompt improved!"), "success");
       }
     } catch (e) {
@@ -2125,7 +2175,7 @@
         for (let i = 0; i < variants.length; i++) {
           await PromptStorageManager.addVersion(promptUuid, variants[i], "ai_variant", { variantGroup: g, variantIndex: i + 1 });
         }
-        if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+        if (listEl && PromptUIManager.state.listMode !== "edit") PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
         _toast(tt("panel_variants_generated", [String(variants.length)], `Generated ${variants.length} variants!`), "success");
       }
     } catch (e) {
@@ -2168,7 +2218,7 @@
       buffer = buffer.trim();
       await PromptStorageManager.addVersion(promptUuid, buffer, "ai_translation", { from: fromLang, to: toLang });
       await PromptStorageManager._ps().then((ps) => ps.updatePrompt(promptUuid, { content: buffer, language: toLang }));
-      if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+      if (listEl && PromptUIManager.state.listMode !== "edit") PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
       _toast(tt("panel_translated", [targetLabel], `Translated to ${targetLabel}`), "success");
     } catch (e) {
       if (!/abort/i.test(e.message || "")) {
@@ -2176,6 +2226,12 @@
         _toast(tt("toast_translate_failed", [e.message], "Translation failed: " + e.message), "error");
       }
     }
+  }
+  async function translateText(promptText, toLang, fromLang = null) {
+    const stream = ollamaStream({ op: "translate", promptText, toLang, fromLang });
+    let buffer = "";
+    for await (const chunk of stream) buffer += chunk;
+    return buffer.trim();
   }
   async function autoSuggestMetadata(promptUuid, listEl) {
     try {
@@ -2185,21 +2241,23 @@
       const data = await chrome.storage.local.get({ autoSuggestMetadata: true });
       if (!data.autoSuggestMetadata) return;
       const metadata = await ollamaRPC({ op: "suggest", promptText: prompt.content, language: prompt.language });
+      const fresh = (await PromptStorageManager.getPrompts()).find((p) => p.uuid === promptUuid);
+      if (!fresh) return;
       const updates = {};
-      if ((!prompt.title || prompt.title === "Untitled Prompt") && metadata.title && metadata.title !== "Untitled Prompt") {
+      if ((!fresh.title || fresh.title === "Untitled Prompt") && metadata.title && metadata.title !== "Untitled Prompt") {
         updates.title = metadata.title;
       }
-      if (!prompt.category && metadata.category && metadata.category !== "Other") {
+      if (!fresh.category && metadata.category && metadata.category !== "Other") {
         updates.category = metadata.category;
       }
-      if (!Array.isArray(prompt.tags) || prompt.tags.length === 0) {
+      if (!Array.isArray(fresh.tags) || fresh.tags.length === 0) {
         const filteredTags = (metadata.tags || []).filter((t2) => t2 !== "untagged");
         if (filteredTags.length > 0) updates.tags = filteredTags;
       }
       if (Object.keys(updates).length > 0) {
         const ps = await PromptStorageManager._ps();
         await ps.updatePrompt(promptUuid, { ...updates, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
-        if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+        if (listEl && PromptUIManager.state.listMode !== "edit") PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
       }
     } catch (e) {
       console.warn("Auto-suggest failed:", e);
@@ -3931,6 +3989,7 @@
       PromptUIManager2.setSearchVisibility(definition.searchVisible !== false);
       Theme.applyAll();
     };
+    let mountSeq = 0;
     const mount = async (view, context = void 0) => {
       const definition = VIEW_DEFINITIONS[view];
       if (!definition) return;
@@ -3944,11 +4003,13 @@
         PromptUIManager2.showPromptList(listEl);
         return;
       }
+      const seq = ++mountSeq;
       state.currentView = view;
       PromptUIManager2.inVariableInputMode = view === PanelView.VARIABLE_INPUT;
       if (definition.kind === "list") {
         applyViewChrome(definition);
         await definition.controller(listEl);
+        if (seq !== mountSeq) return;
         return;
       }
       const builder = definition.builder;
@@ -3962,13 +4023,14 @@
         return;
       }
       if (!node) return;
+      if (seq !== mountSeq) return;
       PromptUIManager2.replacePanelMainContent(node);
       applyViewChrome(definition);
       PromptUIManager2.showPromptList(listEl);
     };
     return { mount };
   })();
-  window.PanelRouter = PanelRouter;
+  if (!__PF_ALREADY_INITIALIZED) window.PanelRouter = PanelRouter;
   var OutsideClickCloser = /* @__PURE__ */ (() => {
     let attached = false;
     const handler = (e) => {
@@ -4090,10 +4152,8 @@
           await _PromptStorageManager.addVersion(result.prompt.uuid, result.prompt.content, "user_input");
         } catch {
         }
-        try {
-          await PromptUIManager2.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
-        } catch {
-        }
+        PromptUIManager2.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`)).catch(() => {
+        });
       }
       return result;
     }
@@ -4198,7 +4258,7 @@
       return await _PromptStorageManager.setData("tagsOrder", order);
     }
   };
-  window.PromptStorageManager = PromptStorageManager2;
+  if (!__PF_ALREADY_INITIALIZED) window.PromptStorageManager = PromptStorageManager2;
   var PromptUIManager2 = class _PromptUIManager {
     // COMMENT: Configuration for the info banner. Toggle 'active' to show/hide.
     static BANNER_CONFIG = {
@@ -4933,18 +4993,25 @@
             e.stopPropagation();
             const titleIn = form.querySelector(".opm-input-field");
             const contentArea = form.querySelector(".opm-textarea-field");
-            const catSel = form.querySelectorAll(".opm-input-field")[2];
+            const formSelects = form.querySelectorAll("select:not(.opm-translate-pick):not(.opm-fork-pick)");
+            const catSel = formSelects[0];
+            const langSel = formSelects[1];
             const t2 = titleIn.value.trim(), c = contentArea.value.trim();
             if (!t2 || !c) {
               alert("Please fill in both title and content.");
               return;
             }
-            const cat = catSel && catSel.tagName === "SELECT" && catSel.value !== "Uncategorized" ? catSel.value : null;
+            if (newBtn.disabled) return;
+            newBtn.disabled = true;
+            const cat = catSel && catSel.value ? catSel.value : null;
+            const language = langSel ? langSel.value === "auto" ? detectLanguage(c).code : langSel.value : void 0;
             const ps = await PromptStorageManager2._ps();
             await PromptStorageManager2.addVersion(prompt.uuid, c, "manual_edit");
-            await ps.updatePrompt(prompt.uuid, { title: t2, content: c, tags: tagInput.getTags(), category: cat });
+            const update = { title: t2, content: c, tags: tagInput.getTags(), category: cat };
+            if (language !== void 0) update.language = language;
+            await ps.updatePrompt(prompt.uuid, update);
             PanelRouter.mount(PanelView.EDIT);
-          }, { once: true });
+          });
         }
         const listElAfter = qs(`#${SELECTORS.PROMPT_LIST}`);
         if (listElAfter) {
@@ -5056,7 +5123,6 @@ ${v.content}`);
       let content = prompt.content;
       let language = prompt.language || null;
       if (toLang && toLang !== prompt.language) {
-        const { translateText } = await import(chrome.runtime.getURL("ai-operations.js"));
         content = await translateText(prompt.content, toLang, prompt.language || null);
         if (!content) return;
         language = toLang;
@@ -5245,7 +5311,7 @@ ${v.content}`);
       }
     }
   };
-  window.PromptUIManager = PromptUIManager2;
+  if (!__PF_ALREADY_INITIALIZED) window.PromptUIManager = PromptUIManager2;
   if (typeof window.__initPromptShared === "function") {
     window.__initPromptShared();
   }
@@ -5256,7 +5322,7 @@ ${v.content}`);
       return [...new Set([...content.matchAll(regex)].map((m) => m[1]))];
     }
     static replaceVariables(content, values) {
-      return Object.entries(values).reduce((res, [k, v]) => res.replace(new RegExp(`#${k}#`, "g"), v), content);
+      return Object.entries(values).reduce((res, [k, v]) => res.replace(new RegExp(`#${k}#`, "g"), () => v), content);
     }
   };
   var PromptMediator = /* @__PURE__ */ (() => {

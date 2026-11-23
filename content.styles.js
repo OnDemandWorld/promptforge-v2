@@ -195,10 +195,10 @@ var injectGlobalStyles = window.injectGlobalStyles || function injectGlobalStyle
       right: 0;
       padding: 10px;
       border-radius: var(--border-radius);
-      display: none;
       width: 280px;
       z-index: 10000;
       opacity: 0;
+      pointer-events: none; /* #45 — invisible (opacity:0) panel must not intercept host-page clicks */
       transform: translateY(10px);
       transition: opacity var(--transition-speed) ease, transform var(--transition-speed) ease;
       backdrop-filter: blur(12px);
@@ -223,6 +223,7 @@ var injectGlobalStyles = window.injectGlobalStyles || function injectGlobalStyle
     #${SELECTORS.ROOT} .opm-prompt-list.opm-visible {
       opacity: 1;
       transform: translateY(0);
+      pointer-events: auto; /* #45 — re-enable interaction only when visible */
     }
     #${SELECTORS.ROOT} .opm-prompt-list.opm-light {
       background-color: var(--light-bg);

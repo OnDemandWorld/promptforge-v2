@@ -139,6 +139,10 @@
 
       const mountSuggestionsPortal = () => {
         const root = document.getElementById(SELECTORS.ROOT) || document.body;
+        // COMMENT: #38 — remove orphaned suggestion portals left by previous
+        // tag inputs (forms unmount without tearing down their portal) so they
+        // don't accumulate in #opm-root with live mousedown listeners.
+        root.querySelectorAll('.opm-tag-suggestions').forEach(n => { if (n !== suggestions) n.remove(); });
         if (suggestions.parentElement !== root) root.appendChild(suggestions);
         suggestions.style.position = 'fixed';
         suggestions.style.zIndex = '100000';
@@ -433,7 +437,12 @@
           document.body.style.cursor = '';
           document.removeEventListener('mousemove', handleMouseMove);
           document.removeEventListener('mouseup', handleMouseUp);
+          window.removeEventListener('blur', handleBlur); // #37
         };
+        // COMMENT: #37 — releasing the mouse outside the window never fires
+        // document mouseup; a blur fallback cleans up so the mousemove listener,
+        // auto-scroll interval and grabbing cursor don't leak.
+        const handleBlur = () => cleanup();
 
         const handleMouseMove = (e) => {
           if (!isDragging || !ghost) return;
@@ -483,7 +492,7 @@
 
         const handleMouseUp = (e) => {
            if (!isDragging) return;
-           
+           if (dragSrcEl && !dragSrcEl.isConnected) { cleanup(); return; } // #37 — list rebuilt mid-drag; abort stale order
            const items = getListItems();
            const newOrderIndices = items.map(item => parseInt(item.dataset.index, 10));
            
@@ -544,6 +553,7 @@
 
             document.addEventListener('mousemove', handleMouseMove);
             document.addEventListener('mouseup', handleMouseUp);
+            window.addEventListener('blur', handleBlur); // #37
           });
         };
 
@@ -616,7 +626,8 @@
             if (window.PromptUIManager?.state?.listMode === 'edit') {
               window.PromptUIManager.requestListRefreshSuppression?.();
             }
-            await window.PromptStorageManager.setPrompts(newPrompts);
+            const ps = await window.PromptStorageManager._ps();
+            await ps.reorderPrompts(newPrompts.map(p => p.uuid)); // #36 — locked fresh read, not a stale snapshot
           }
         );
 
@@ -699,13 +710,15 @@
           e.stopPropagation();
           const t = titleIn.value.trim(), c = contentArea.value.trim();
           if (!t || !c) { alert(tt('panel_fill_both', null, 'Please fill in both title and content.')); return; }
+          if (saveBtn.disabled) return; // #41 — double-submit guard
+          saveBtn.disabled = true;
           const tags = enableTags && tagInput ? tagInput.getTags() : [];
           const cat = catSelect.value || null;
           const language = langSelect.value === 'auto'
             ? (window.PFLanguage ? window.PFLanguage.detectLanguage(c).code : null)
             : langSelect.value;
           const res = await window.PromptStorageManager.savePrompt({ title: t, content: c, tags, category: cat, language });
-          if (!res.success) { alert(tt('panel_save_error', null, 'Error saving prompt.')); return; }
+          if (!res.success) { saveBtn.disabled = false; alert(tt('panel_save_error', null, 'Error saving prompt.')); return; }
           window.PanelRouter.mount(window.PanelView.LIST);
         });
 
@@ -956,12 +969,8 @@
                   e.stopPropagation();
                   if (!confirm(tt('panel_remove_tag_confirm', [tag], `Remove tag "${tag}" from all prompts?`))) return;
                   try {
-                    const prompts = await window.PromptStorageManager.getPrompts();
-                    const updated = prompts.map(p => {
-                      const nextTags = Array.isArray(p.tags) ? p.tags.filter(t => t !== tag) : [];
-                      return { ...p, tags: nextTags };
-                    });
-                    await window.PromptStorageManager.setPrompts(updated);
+                    const ps = await window.PromptStorageManager._ps();
+                    const updated = await ps.removeTagEverywhere(tag); // #36 — locked fresh read
                     counts = await TagService.getCounts(updated);
                     finalOrder = finalOrder.filter(t => t !== tag);
                     await window.PromptStorageManager.saveTagsOrder(finalOrder);
@@ -997,7 +1006,7 @@
             Behaviors.hideList(listEl);
             State.closeTimer = null;
           }
-        }, window.PROMPT_CLOSE_DELAY || 10000);
+        }, window.PROMPT_CLOSE_DELAY || 1000); // #73 — match the styles' 1000ms (10000 was a 10x typo)
       },
       cancelCloseTimer() {
         if (State.closeTimer) clearTimeout(State.closeTimer);

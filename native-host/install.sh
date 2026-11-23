@@ -14,6 +14,12 @@ if [[ -z "$EXT_ID" ]]; then
   echo "Find it at chrome://extensions (Developer mode) — the ID under PromptForge."
   exit 1
 fi
+# COMMENT: #74 — validate the ID (32 chars, a-p) before interpolating it into the
+# manifest JSON; a stray quote would break the JSON or mis-scope allowed_origins.
+if [[ ! "$EXT_ID" =~ ^[a-p]{32}$ ]]; then
+  echo "error: extension ID must be exactly 32 characters (a-p). Got: '$EXT_ID'"
+  exit 1
+fi
 
 command -v node >/dev/null 2>&1 || { echo "error: Node.js is required (node not on PATH)"; exit 1; }
 

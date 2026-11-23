@@ -91,7 +91,9 @@ function setActiveNav(hash) {
   });
 }
 
+let _routeSeq = 0; // #30 — generation token; stale overlapping renders bail before appending
 async function handleRoute() {
+  ++_routeSeq;
   const hash = window.location.hash || '#/library';
   setActiveNav(hash);
 
@@ -125,11 +127,34 @@ topnavLinks.forEach(a => {
   });
 });
 
-window.addEventListener('hashchange', handleRoute);
+// COMMENT: #2 — guard against losing unsaved editor drafts. renderEditor
+// registers a live dirty-check; navigation away from the editor (and tab
+// close) prompts before discarding. Cleared when a non-editor view renders.
+let _editorDirtyCheck = null;
+let _editorHash = null;
+window.addEventListener('beforeunload', e => {
+  if (_editorDirtyCheck && _editorDirtyCheck()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+window.addEventListener('hashchange', () => {
+  const hash = window.location.hash || '#/library';
+  if (_editorDirtyCheck && _editorDirtyCheck() && !hash.startsWith('#/editor')) {
+    if (!confirm(t('editor_unsaved_confirm', null, 'You have unsaved changes. Leave without saving?'))) {
+      // Stay on the editor: restore its hash without re-rendering.
+      history.replaceState(null, '', _editorHash || '#/editor');
+      return;
+    }
+  }
+  handleRoute();
+});
 
 // ─── Library View ─────────────────────────────────────────────────────────
 
 async function renderLibrary(container, onNavigate) {
+  _editorDirtyCheck = null; // #2 — leaving the editor clears the unsaved guard
+  const myRoute = _routeSeq; // #30
   container.innerHTML = '';
   const wrapper = el('div', { className: 'library-container' });
 
@@ -200,6 +225,7 @@ async function renderLibrary(container, onNavigate) {
   // Prompt list
   const listArea = el('div', { className: 'prompt-list' });
   wrapper.appendChild(listArea);
+  if (myRoute !== _routeSeq) return; // #30 — a newer route superseded this render
   container.appendChild(wrapper);
 
   let debounceTimer;
@@ -208,11 +234,14 @@ async function renderLibrary(container, onNavigate) {
 
   await loadPrompts();
 
+  let loadSeq = 0; // #29 — sequence token to drop stale overlapping renders
   async function loadPrompts() {
+    const seq = ++loadSeq;
     listArea.innerHTML = '';
     const sortBy = sortSelect.value;
     const searchVal = search.value.trim();
     let prompts = await PromptStorage.getPrompts();
+    if (seq !== loadSeq) return; // #29 — a newer load superseded this one
 
     // Filter by archive (hide archived by default)
     prompts = prompts.filter(p => !p._archived);
@@ -270,8 +299,8 @@ async function renderLibrary(container, onNavigate) {
       hdr.appendChild(el('h4', {}, [p.title || t('untitled', null, 'Untitled Prompt')]));
       const favBtn = el('button', { className: `btn btn-sm ${(p.favorite ? 'btn-primary' : 'btn-secondary')}`, title: p.favorite ? t('fav_remove', null, 'Unfavorite') : t('fav_add', null, 'Favorite') }, [p.favorite ? '★' : '☆']);
       favBtn.addEventListener('click', async () => {
-        await PromptStorage.updatePrompt(p.uuid, { favorite: !p.favorite });
-        loadPrompts();
+        try { await PromptStorage.updatePrompt(p.uuid, { favorite: !p.favorite }); loadPrompts(); }
+        catch (e) { toast(t('toast_failed', [e.message], 'Failed: ' + e.message), 'error'); } // #69
       });
       hdr.appendChild(favBtn);
       card.appendChild(hdr);
@@ -370,12 +399,18 @@ async function renderLibrary(container, onNavigate) {
           const newCategory = categoryApplied ? metadata.category : p.category;
           const newTags = tagsApplied ? [...new Set([...(p.tags || []), ...filteredTags])] : p.tags;
 
-          await PromptStorage.updatePrompt(p.uuid, {
+          // COMMENT: #20 — persist categoryId too. normalisePrompt prefers the
+          // existing categoryId over the category name, so writing only
+          // `category` left the stale id in place and the suggestion never took
+          // effect in filtering/the editor.
+          const suggestUpdate = {
             title: newTitle,
             category: newCategory,
             tags: newTags,
             updatedAt: new Date().toISOString()
-          });
+          };
+          if (categoryApplied) suggestUpdate.categoryId = canonicalCategoryId(newCategory) || null;
+          await PromptStorage.updatePrompt(p.uuid, suggestUpdate);
 
           const parts = [];
           if (titleApplied) parts.push('title');
@@ -394,8 +429,8 @@ async function renderLibrary(container, onNavigate) {
 
       const archiveBtn = el('button', { className: 'btn btn-sm btn-secondary' }, [t('btn_archive', null, 'Archive')]);
       archiveBtn.addEventListener('click', async () => {
-        await PromptStorage.updatePrompt(p.uuid, { _archived: true });
-        loadPrompts();
+        try { await PromptStorage.updatePrompt(p.uuid, { _archived: true }); loadPrompts(); }
+        catch (e) { toast(t('toast_failed', [e.message], 'Failed: ' + e.message), 'error'); } // #69
       });
       actions.appendChild(archiveBtn);
 
@@ -483,9 +518,16 @@ let activeEditorAbort = null;
 async function renderEditor(container, promptUuid, onNavigate) {
   // Abort any stream still running from the previous editor session.
   if (activeEditorAbort) { activeEditorAbort.abort(); activeEditorAbort = null; }
+  const myRoute = _routeSeq; // #30
   container.innerHTML = '';
 
   let improveController = null;
+
+  // COMMENT: #2 — dirty tracking lives for the whole editor view so every
+  // field (not just the textarea) can mark it, and the router guard can read it.
+  let dirty = false;
+  _editorDirtyCheck = () => dirty;
+  _editorHash = window.location.hash || '#/editor';
 
   const wrapper = el('div', { className: 'editor-container' });
 
@@ -553,7 +595,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
   // COMMENT: v3 feature D-II — the effective language for AI operations:
   // the selected one, or offline detection when the selector is on Auto.
   function currentLanguage() {
-    return langSel.value === 'auto' ? detectLanguage(textarea.value).code : langSel.value;
+    if (langSel.value !== 'auto') return langSel.value;
+    const d = detectLanguage(textarea.value); // #22 — ignore low-confidence guesses
+    return d.confidence >= 0.75 ? d.code : null;
   }
 
   // Tag input
@@ -565,7 +609,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     tagContainer.innerHTML = '';
     for (const t of currentTags) {
       const pill = el('span', { className: 'tag' }, [t, ' ', el('span', { className: 'remove' }, ['×'])]);
-      pill.querySelector('.remove').addEventListener('click', () => { currentTags = currentTags.filter(x => x !== t); renderTags(); });
+      pill.querySelector('.remove').addEventListener('click', () => { currentTags = currentTags.filter(x => x !== t); dirty = true; renderTags(); });
       tagContainer.appendChild(pill);
     }
     tagContainer.appendChild(tagInput);
@@ -576,7 +620,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
       // COMMENT: Strip ALL commas — only the first was removed, so pasting
       // "a, b, c" created one tag containing commas.
       const t = tagInput.value.replace(/,/g, '').trim().toLowerCase().replace(/\s+/g, '-');
-      if (!currentTags.includes(t)) { currentTags.push(t); renderTags(); }
+      if (!currentTags.includes(t)) { currentTags.push(t); dirty = true; renderTags(); }
       tagInput.value = '';
     }
   });
@@ -605,6 +649,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
   const versionBtn = el('button', { className: 'btn btn-secondary' }, [t('editor_versions', null, 'Version History')]);
   actions.appendChild(versionBtn);
   wrapper.appendChild(actions);
+  if (myRoute !== _routeSeq) return; // #30 — a newer route superseded this render
   container.appendChild(wrapper);
 
   // Load existing prompt
@@ -627,9 +672,14 @@ async function renderEditor(container, promptUuid, onNavigate) {
           }
           catSelect.value = p.category;
         }
-        // COMMENT: v3 feature D — reflect the stored language; stays on
-        // "Auto-detect" if the stored value isn't in the active language set.
-        if (p.language && [...langSel.options].some(o => o.value === p.language)) {
+        // COMMENT: #23 — reflect the stored language even when it isn't in the
+        // active set: append it as an option (like custom categories above) so
+        // saving doesn't silently overwrite it with auto/default detection.
+        if (p.language) {
+          if (![...langSel.options].some(o => o.value === p.language)) {
+            const meta = languageMeta(p.language);
+            langSel.appendChild(el('option', { value: meta.code }, [meta.label]));
+          }
           langSel.value = p.language;
         }
         currentTags = [...(p.tags || [])];
@@ -639,12 +689,21 @@ async function renderEditor(container, promptUuid, onNavigate) {
         onNavigate('#/library');
         return;
       }
-    } catch (e) { toast('Error loading prompt: ' + e.message, 'error'); }
+    } catch (e) {
+      toast('Error loading prompt: ' + e.message, 'error');
+      // COMMENT: #62 — don't leave a blank editor still bound to the uuid (a
+      // subsequent Save would wipe the stored prompt). Return to the library.
+      onNavigate('#/library');
+      return;
+    }
   }
 
   // Events
-  let dirty = false;
   textarea.addEventListener('input', () => { dirty = true; });
+  // COMMENT: #2 — title/category/language edits also mark the draft dirty.
+  titleInput.addEventListener('input', () => { dirty = true; });
+  catSelect.addEventListener('change', () => { dirty = true; });
+  langSel.addEventListener('change', () => { dirty = true; });
   textarea.addEventListener('keydown', e => {
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -695,7 +754,13 @@ async function renderEditor(container, promptUuid, onNavigate) {
     // COMMENT: v3 feature D — resolve the prompt's language. "Auto" runs
     // offline detection; undetectable/mixed-script text stores null (no badge
     // until the user picks one from the selector).
-    const languageResolved = langSel.value === 'auto' ? detectLanguage(content).code : langSel.value;
+    // COMMENT: #22 — only trust auto-detection at confidence >= 0.75; mixed
+    // Traditional/Simplified text scores 0.2/0.5 and must store null (Auto),
+    // not a guessed language (per language.js's documented contract).
+    const detected = detectLanguage(content);
+    const languageResolved = langSel.value === 'auto'
+      ? (detected.confidence >= 0.75 ? detected.code : null)
+      : langSel.value;
 
     // COMMENT: C4 — resolve category to (canonical id, English display name).
     const catIdResolved = canonicalCategoryId(catSelect.value);
@@ -716,7 +781,7 @@ async function renderEditor(container, promptUuid, onNavigate) {
     }
 
     saveBtn.disabled = true;
-    if (saveIndicator) saveIndicator.textContent = 'Saving…';
+    if (saveIndicator) saveIndicator.textContent = t('editor_saving', null, 'Saving…'); // #68
 
     try {
       if (isFirstSave) {
@@ -749,15 +814,20 @@ async function renderEditor(container, promptUuid, onNavigate) {
         setAiStatus('Analyzing prompt…');
 
         try {
+          // COMMENT: #28 — capture field values before the AI round-trip so we
+          // only fill fields the user hasn't edited while it was running.
+          const titleAtSave = titleInput.value;
+          const catAtSave = catSelect.value;
+          const tagsAtSave = JSON.stringify(currentTags);
           const metadata = await suggestAllMetadata(content, languageResolved);
           const filteredTags = metadata.tags.filter(t => t !== 'untagged');
           const titleApplied = !!(metadata.title && metadata.title !== 'Untitled Prompt');
           const tagsApplied = filteredTags.length > 0;
           const categoryApplied = !!(metadata.category && metadata.category !== 'Other');
 
-          if (titleApplied) titleInput.value = metadata.title;
-          if (categoryApplied) catSelect.value = canonicalCategoryId(metadata.category) || metadata.category;
-          if (tagsApplied) { currentTags = filteredTags; renderTags(); }
+          if (titleApplied && titleInput.value === titleAtSave) titleInput.value = metadata.title;
+          if (categoryApplied && catSelect.value === catAtSave) catSelect.value = canonicalCategoryId(metadata.category) || metadata.category;
+          if (tagsApplied && JSON.stringify(currentTags) === tagsAtSave) { currentTags = filteredTags; renderTags(); }
 
           const aiCatId = canonicalCategoryId(catSelect.value);
           await PromptStorage.updatePrompt(promptUuid, {
@@ -782,10 +852,10 @@ async function renderEditor(container, promptUuid, onNavigate) {
           toast(t('toast_saved_skip', null, 'Saved! (AI suggestion skipped)'), 'warning', 2000);
         }
       } else {
-        toast('Saved!', 'success', 1500);
+        toast(t('toast_saved', null, 'Saved!'), 'success', 1500); // #68
       }
     } catch (e) {
-      toast('Save failed: ' + e.message, 'error');
+      toast(t('toast_save_failed', [e.message], 'Save failed: ' + e.message), 'error'); // #68
     } finally {
       saveBtn.disabled = false;
       if (saveIndicator) saveIndicator.textContent = '';
@@ -811,6 +881,13 @@ async function renderEditor(container, promptUuid, onNavigate) {
       const gen = await improvePrompt(content, { signal: improveController.signal, language: currentLanguage() });
       for await (const chunk of gen) { buffer += chunk; textarea.value = buffer; }
       buffer = buffer.replace(/^(?:here|sure|okay|the improved|improved|below)[^\n]*\n?/i, '').trim();
+      // COMMENT: #26 — an empty model response must not silently wipe the draft
+      // (the old unconditional assignment cleared the textarea with no toast).
+      if (!buffer) {
+        textarea.value = snapshot;
+        toast(t('toast_improve_failed', ['empty model response'], 'Improvement failed: empty model response'), 'error');
+        return;
+      }
       textarea.value = buffer;
 
       // Sanity check: did the model produce a response instead of a rewritten prompt?
@@ -841,7 +918,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
     variantsBtn.disabled = true; variantsBtn.textContent = t('panel_generating', null, 'Generating variants…');
     setAiStatus(t('panel_generating', null, 'Generating variants…'));
     try {
-      const variants = await generateVariants(content, 3, { language: currentLanguage() });
+      // COMMENT: #21 — pass null so generateVariants falls back to the user's
+      // variantCount setting; the hardcoded 3 always overrode it.
+      const variants = await generateVariants(content, null, { language: currentLanguage() });
       if (promptUuid) {
         const g = generateUUID();
         for (let i = 0; i < variants.length; i++) {
@@ -879,6 +958,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
   async function runTranslate(fromLang, toLang) {
     const content = textarea.value.trim();
     if (!content) return;
+    // COMMENT: #25 — keep the pre-translation text so a failure/Stop/empty
+    // result can restore it instead of leaving a partial translation behind.
+    const snapshot = textarea.value;
     // Snapshot the current text as a version before overwriting it.
     if (promptUuid) await PromptStorage.addVersion(promptUuid, content, 'manual_edit');
     improveBtn.disabled = true;
@@ -893,6 +975,13 @@ async function renderEditor(container, promptUuid, onNavigate) {
       const gen = translatePrompt(content, toLang, { fromLang, signal: improveController.signal });
       for await (const chunk of gen) { buffer += chunk; textarea.value = buffer; }
       buffer = buffer.trim();
+      // COMMENT: #25 — empty result: restore the original instead of leaving
+      // the textarea cleared by the stream.
+      if (!buffer) {
+        textarea.value = snapshot;
+        toast(t('toast_translate_failed', ['empty model response'], 'Translation failed: empty model response'), 'error');
+        return;
+      }
       if (buffer && promptUuid) {
         await PromptStorage.addVersion(promptUuid, buffer, 'ai_translation', { from: fromLang, to: toLang });
         await PromptStorage.updatePrompt(promptUuid, { content: buffer, language: toLang, updatedAt: new Date().toISOString() });
@@ -902,6 +991,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
       }
     } catch (e) {
       if (!e.message.includes('aborted')) toast(t('toast_translate_failed', [e.message], 'Translation failed: ' + e.message), 'error');
+      // COMMENT: #25 — restore the original text on failure/Stop so a partial
+      // translation isn't left in the editor (mirrors doImprove).
+      textarea.value = snapshot;
     } finally {
       if (activeEditorAbort === improveController) activeEditorAbort = null;
       improveController = null; textarea.removeAttribute('readonly'); textarea.style.opacity = '1';
@@ -945,6 +1037,9 @@ async function renderEditor(container, promptUuid, onNavigate) {
     let newLang = fromLang;
     if (toLang && toLang !== fromLang) {
       stopBtn.style.display = 'inline-flex';
+      // COMMENT: #31 — block Improve/Translate while fork translates so they
+      // can't overwrite the shared improveController and orphan this stream.
+      improveBtn.disabled = true; translateBtn.disabled = true;
       setAiStatus(t('editor_translating', null, 'Translating…'));
       improveController = new AbortController();
       activeEditorAbort = improveController;
@@ -957,11 +1052,16 @@ async function renderEditor(container, promptUuid, onNavigate) {
         newLang = toLang;
       } catch (e) {
         if (!e.message.includes('aborted')) toast(t('toast_translate_failed', [e.message], 'Translation failed: ' + e.message), 'error');
+        // COMMENT: #24 — re-enable Fork before returning; the outer try/finally
+        // that normally re-enables it is never reached on this early return.
+        forkBtn.disabled = false;
+        improveBtn.disabled = false; translateBtn.disabled = false; // #31
         return;
       } finally {
         if (activeEditorAbort === improveController) activeEditorAbort = null;
         improveController = null;
         stopBtn.style.display = 'none';
+        improveBtn.disabled = false; translateBtn.disabled = false; // #31
         clearAiStatus();
       }
     }
@@ -988,8 +1088,12 @@ async function renderEditor(container, promptUuid, onNavigate) {
 
   async function doVersionHistory() {
     if (!promptUuid) { toast(t('toast_save_first', null, 'Save the prompt first'), 'warning'); return; }
-    const versions = await PromptStorage.getVersions(promptUuid);
-    showVersionModal(versions);
+    // COMMENT: #69 — getVersions throws if the prompt was deleted elsewhere;
+    // surface it instead of an unhandled rejection / dead button.
+    try {
+      const versions = await PromptStorage.getVersions(promptUuid);
+      showVersionModal(versions);
+    } catch (e) { toast(t('toast_failed', [e.message], 'Failed: ' + e.message), 'error'); }
   }
 }
 
@@ -1076,6 +1180,11 @@ function showVersionModal(versions) {
         // COMMENT: Built with DOM APIs — the old innerHTML version escaped
         // only "<" and would have become XSS the moment it moved into an
         // attribute context.
+        // COMMENT: #70 — wrap in its own overlay nested inside the history
+        // overlay, so closing the history modal also closes this one (the old
+        // bare modal orphaned on the page and stacked on repeated View clicks).
+        const mOverlay = document.createElement('div');
+        mOverlay.className = 'modal-overlay';
         const m = document.createElement('div');
         m.className = 'modal';
         const mHeader = document.createElement('div');
@@ -1083,14 +1192,16 @@ function showVersionModal(versions) {
         mHeader.appendChild(document.createElement('h3')).textContent = t('modal_version', [String(i + 1)], `Version ${i + 1}`);
         const mClose = document.createElement('button');
         mClose.className = 'modal-close'; mClose.textContent = '×';
-        mClose.addEventListener('click', () => m.remove());
+        mClose.addEventListener('click', () => mOverlay.remove());
         mHeader.appendChild(mClose);
         m.appendChild(mHeader);
         const pre = document.createElement('div');
         pre.style.cssText = 'font-family:var(--font-mono);font-size:13px;white-space:pre-wrap;';
         pre.textContent = v.content;
         m.appendChild(pre);
-        document.getElementById('modal-root').appendChild(m);
+        mOverlay.appendChild(m);
+        mOverlay.addEventListener('click', e => { if (e.target === mOverlay) mOverlay.remove(); });
+        overlay.appendChild(mOverlay);
       });
       row.appendChild(viewBtn);
       body.appendChild(row);
@@ -1104,6 +1215,8 @@ function showVersionModal(versions) {
 // ─── Settings View ────────────────────────────────────────────────────────
 
 async function renderSettings(container) {
+  _editorDirtyCheck = null; // #2 — leaving the editor clears the unsaved guard
+  const myRoute = _routeSeq; // #30
   container.innerHTML = '';
   const wrapper = el('div', { className: 'editor-container', style: 'max-width:700px;' });
   wrapper.appendChild(el('h2', {}, [t('settings_title', null, 'Settings')]));
@@ -1132,6 +1245,7 @@ async function renderSettings(container) {
   // ── About footer (version + branding) ──
   wrapper.appendChild(buildAboutFooter());
 
+  if (myRoute !== _routeSeq) return; // #30 — a newer route superseded this render
   container.appendChild(wrapper);
 }
 
@@ -1357,6 +1471,11 @@ async function buildOllamaSettings() {
           if (data.ollamaModel) toast(t('toast_model_switch', [data.ollamaModel, models[0]], `Model "${data.ollamaModel}" not found — switched to ${models[0]}`), 'warning');
         }
       }
+    } else {
+      // COMMENT: #32 — a non-OK response (401 without a token, 404 bad path)
+      // must not leave the selector stuck on "Loading models…" forever.
+      modelSel.innerHTML = '';
+      modelSel.appendChild(el('option', {}, [OPT_NOCONN]));
     }
   } catch {
     modelSel.innerHTML = '';
@@ -1693,7 +1812,7 @@ async function buildDataSettings() {
   const statusRow = el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:8px;' });
   const statusLabel = el('span', { style: 'min-width:120px;font-size:13px;color:var(--color-text-secondary);' }, ['Backup:']);
   const statusText = el('span', { style: 'font-size:13px;' }, ['Off']);
-  const pickBtn = el('button', { className: 'btn btn-sm btn-secondary' }, ['Choose Backup Location…']);
+  const pickBtn = el('button', { className: 'btn btn-sm btn-secondary' }, ['Enable Auto-Backup']);
   const disableBtn = el('button', { className: 'btn btn-sm btn-danger', style: 'display:none;' }, ['Disable']);
 
   async function refreshBackupStatus() {
@@ -1706,7 +1825,7 @@ async function buildDataSettings() {
     } else {
       statusText.textContent = 'Off';
       pickBtn.style.display = '';
-      pickBtn.textContent = 'Choose Backup Location…';
+      pickBtn.textContent = 'Enable Auto-Backup';
       disableBtn.style.display = 'none';
     }
   }
@@ -1774,18 +1893,37 @@ async function buildDataSettings() {
   async function doImport(mode) {
     if (!fileInput.files || fileInput.files.length === 0) { toast(t('toast_select_file', null, 'Select a file first'), 'warning'); return; }
     const file = fileInput.files[0];
-    const text = await file.text();
     try {
+      // COMMENT: #1/#71 — read AND validate the file before touching existing
+      // data. The old code removed prompts_storage first, so a corrupt file
+      // wiped the library (and auto-backup then overwrote the backup with it).
+      const text = await file.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { throw new Error('Invalid JSON: file could not be parsed'); }
+      const validShape = Array.isArray(parsed) || (parsed && typeof parsed === 'object' && Array.isArray(parsed.prompts));
+      if (!validShape) throw new Error('Invalid JSON format – expected an array or store object');
+
       if (mode === 'replace') {
         // Replace only prompt data; preserve all other settings (Ollama URL,
         // model, API key, backup, theme, etc.). Previously this called
         // chrome.storage.local.clear(), which wiped every setting.
+        // COMMENT: #1 — snapshot so a post-wipe import failure can roll back.
+        const snapshot = await chrome.storage.local.get(['prompts_storage', 'prompts']);
         await chrome.storage.local.remove(['prompts_storage', 'prompts']);
-        const result = await PromptStorage.importPrompts(file);
-        toast(t('toast_replaced', [String(Array.isArray(result) ? result.length : 'unknown')], `Replaced with ${Array.isArray(result) ? result.length : 'unknown'} prompts`), 'success');
+        try {
+          const result = await PromptStorage.importPrompts(text);
+          toast(t('toast_replaced', [String(Array.isArray(result) ? result.length : 'unknown')], `Replaced with ${Array.isArray(result) ? result.length : 'unknown'} prompts`), 'success');
+        } catch (e) {
+          await chrome.storage.local.set(snapshot); // restore the pre-import library
+          throw e;
+        }
       } else {
-        const result = await PromptStorage.importPrompts(file);
-        toast(t('toast_imported', [String(Array.isArray(result) ? result.length : 'unknown')], `Imported ${Array.isArray(result) ? result.length : 'unknown'} prompts`), 'success');
+        // COMMENT: #53 — report net newly-added prompts, not the total library
+        // size (importPrompts returns the full merged array).
+        const beforeCount = (await PromptStorage.getPrompts()).length;
+        const result = await PromptStorage.importPrompts(text);
+        const added = Array.isArray(result) ? Math.max(0, result.length - beforeCount) : 0;
+        toast(t('toast_imported', [String(added)], `Imported ${added} prompts`), 'success');
       }
     } catch (e) { toast(t('toast_import_failed', [e.message], 'Import failed: ' + e.message), 'error'); }
   }
@@ -1802,9 +1940,19 @@ async function buildDataSettings() {
 
   // Delete all
   const deleteBtn = el('button', { className: 'btn btn-danger' }, [t('data_delete_all', null, 'Delete All Data')]);
-  deleteBtn.addEventListener('click', () => {
+  deleteBtn.addEventListener('click', async () => {
     const confirmation = prompt(t('data_delete_prompt', null, 'Type DELETE to confirm:'));
     if (confirmation !== 'DELETE') return;
+    // COMMENT: #34 — disconnect folder sync first; otherwise initSync restarts
+    // the watcher after reload and re-imports every prompt from the sync file,
+    // silently undoing the deletion. disconnectSync clears the shadow+settings.
+    try {
+      const s = await getSyncSettings();
+      if (s && s.enabled) {
+        await disconnectSync();
+        toast(t('toast_sync_disabled', null, 'Folder sync disconnected so deleted data is not restored.'), 'info');
+      }
+    } catch { /* best-effort */ }
     // COMMENT: Remove prompt data only. local.clear() also wiped
     // aiProvidersMap (integrations UI then showed everything disabled while
     // host permissions stayed granted), onboarding, theme, and — left alone —
@@ -1825,7 +1973,13 @@ async function buildDataSettings() {
 // ─── Init ─────────────────────────────────────────────────────────────────
 
 initTheme().catch(() => {});
-handleRoute();
+// COMMENT: #72 — surface an initial render failure instead of leaving a blank
+// page with no retry affordance.
+handleRoute().catch(e => {
+  console.error('[PromptForge] initial render failed:', e);
+  const c = document.getElementById('main-content');
+  if (c) c.textContent = 'Failed to load PromptForge. Reload the page to retry.';
+});
 
 // Auto-backup: start listener on app load
 (async function initAutoBackup() {

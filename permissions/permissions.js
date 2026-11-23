@@ -52,7 +52,10 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
       ensureUrlPromise.then(resolvedUrl => {
-        if (resolvedUrl) {
+        // COMMENT: #65 — only http(s) URLs (the aiProvidersMap lives in writable
+        // storage; the pills already apply this allowlist). #66 — when no valid
+        // URL resolves, replace any stale button instead of leaving it behind.
+        if (resolvedUrl && /^https?:\/\//i.test(resolvedUrl)) {
           // Create (or replace) the Get Started button
           getStartedBtnContainer.innerHTML = `<button id="get-started-btn" class="custom-button" style="font-size: 1.2rem; padding: 0.75rem 1rem; margin-top: 1rem; display: inline-flex; align-items: center; gap: 0.5rem;">
               <img src="../icons/icon.svg" alt="PromptForge Icon" width="28" height="28" style="object-fit: cover;">
@@ -63,7 +66,11 @@ document.addEventListener('DOMContentLoaded', function () {
           document.getElementById('get-started-btn').addEventListener('click', () => {
             window.open(resolvedUrl, '_blank');
           });
+        } else if (getStartedBtnContainer) {
+          getStartedBtnContainer.innerHTML = '<h3 class="custom-onboarding-title">First, select the AI Assistants you want to use.</h3>';
         }
+      }).catch(() => { // #66 — fallback fetch failure must not leave stale content
+        if (getStartedBtnContainer) getStartedBtnContainer.innerHTML = '';
       });
 
     } else if (getStartedBtnContainer) {

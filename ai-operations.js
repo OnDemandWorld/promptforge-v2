@@ -17,13 +17,21 @@
    -------------------------------------------------------------------------- */
 let _aiPort = null;
 let _aiReqId = 0;
+// COMMENT: #35 — cleanup callbacks for in-flight RPCs/streams. On disconnect
+// (SW terminate / extension reload) every pending request is settled so callers
+// don't hang forever with a stuck "Generating…" indicator.
+const _pendingCleanups = new Set();
 
 function aiPort() {
   // COMMENT: Reconnect lazily — the SW can terminate; a dead port throws on
   // postMessage and the next call rebuilds it.
   if (!_aiPort) {
     _aiPort = chrome.runtime.connect({ name: 'pf-ai' });
-    _aiPort.onDisconnect.addListener(() => { _aiPort = null; });
+    _aiPort.onDisconnect.addListener(() => {
+      _aiPort = null;
+      for (const cleanup of [..._pendingCleanups]) cleanup(); // #35
+      _pendingCleanups.clear();
+    });
   }
   return _aiPort;
 }
@@ -33,16 +41,23 @@ function ollamaRPC(message) {
   return new Promise((resolve, reject) => {
     const port = aiPort();
     const id = ++_aiReqId;
+    const cleanup = () => { // #35 — invoked on port disconnect
+      port.onMessage.removeListener(onMessage);
+      reject(new Error('AI port disconnected'));
+    };
     const onMessage = (msg) => {
       if (!msg || msg.id !== id) return;
       if (msg.error !== undefined) {
+        _pendingCleanups.delete(cleanup);
         port.onMessage.removeListener(onMessage);
         reject(new Error(msg.error));
       } else if ('result' in msg) {
+        _pendingCleanups.delete(cleanup);
         port.onMessage.removeListener(onMessage);
         resolve(msg.result);
       }
     };
+    _pendingCleanups.add(cleanup);
     port.onMessage.addListener(onMessage);
     port.postMessage({ id, ...message });
   });
@@ -67,6 +82,14 @@ function ollamaStream(message) {
     if (msg.done || msg.error !== undefined) done = true;
     if (resolveNext) { const r = resolveNext; resolveNext = null; r(); }
   };
+  // COMMENT: #35 — on disconnect, terminate the stream with an error so the
+  // consumer's for-await ends instead of hanging on resolveNext forever.
+  const cleanup = () => {
+    error = new Error('AI port disconnected');
+    done = true;
+    if (resolveNext) { const r = resolveNext; resolveNext = null; r(); }
+  };
+  _pendingCleanups.add(cleanup);
   port.onMessage.addListener(onMessage);
   port.postMessage({ id, ...message });
 
@@ -78,6 +101,7 @@ function ollamaStream(message) {
         await new Promise(r => { resolveNext = r; });
       }
     } finally {
+      _pendingCleanups.delete(cleanup);
       port.onMessage.removeListener(onMessage);
     }
   })();
@@ -164,7 +188,7 @@ export async function improvePrompt(promptUuid, listEl) {
     if (buffer) {
       await PromptStorageManager.addVersion(promptUuid, buffer, 'ai_improvement');
       await PromptStorageManager._ps().then(ps => ps.updatePrompt(promptUuid, { content: buffer }));
-      if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+      if (listEl && PromptUIManager.state.listMode !== 'edit') PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts()); // #43 — don't wipe an open edit form
       _toast(tt('panel_improved', null, 'Prompt improved!'), 'success');
     }
   } catch (e) {
@@ -204,7 +228,7 @@ export async function generateVariants(promptUuid, listEl) {
       for (let i = 0; i < variants.length; i++) {
         await PromptStorageManager.addVersion(promptUuid, variants[i], 'ai_variant', { variantGroup: g, variantIndex: i + 1 });
       }
-      if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+      if (listEl && PromptUIManager.state.listMode !== 'edit') PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts()); // #43 — don't wipe an open edit form
       _toast(tt('panel_variants_generated', [String(variants.length)], `Generated ${variants.length} variants!`), 'success');
     }
   } catch (e) { console.error('Variants failed:', e); _toast(tt('panel_variants_failed', [e.message], 'Variant generation failed: ' + e.message), 'error'); }
@@ -259,7 +283,7 @@ export async function translatePrompt(promptUuid, toLang, listEl) {
 
     await PromptStorageManager.addVersion(promptUuid, buffer, 'ai_translation', { from: fromLang, to: toLang });
     await PromptStorageManager._ps().then(ps => ps.updatePrompt(promptUuid, { content: buffer, language: toLang }));
-    if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+    if (listEl && PromptUIManager.state.listMode !== 'edit') PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts()); // #43
     _toast(tt('panel_translated', [targetLabel], `Translated to ${targetLabel}`), 'success');
   } catch (e) {
     if (!/abort/i.test(e.message || '')) {
@@ -299,16 +323,20 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
     if (!data.autoSuggestMetadata) return;
 
     const metadata = await ollamaRPC({ op: 'suggest', promptText: prompt.content, language: prompt.language });
+    // COMMENT: #42 — re-read the prompt after the RPC; the pre-RPC snapshot is
+    // stale and would overwrite fields the user (or app.js) filled meanwhile.
+    const fresh = (await PromptStorageManager.getPrompts()).find(p => p.uuid === promptUuid);
+    if (!fresh) return;
     const updates = {};
     // COMMENT: Only fill fields the user left empty — never overwrite a
     // user-provided title/tags/category.
-    if ((!prompt.title || prompt.title === 'Untitled Prompt') && metadata.title && metadata.title !== 'Untitled Prompt') {
+    if ((!fresh.title || fresh.title === 'Untitled Prompt') && metadata.title && metadata.title !== 'Untitled Prompt') {
       updates.title = metadata.title;
     }
-    if (!prompt.category && metadata.category && metadata.category !== 'Other') {
+    if (!fresh.category && metadata.category && metadata.category !== 'Other') {
       updates.category = metadata.category;
     }
-    if (!Array.isArray(prompt.tags) || prompt.tags.length === 0) {
+    if (!Array.isArray(fresh.tags) || fresh.tags.length === 0) {
       const filteredTags = (metadata.tags || []).filter(t => t !== 'untagged');
       if (filteredTags.length > 0) updates.tags = filteredTags;
     }
@@ -316,7 +344,7 @@ export async function autoSuggestMetadata(promptUuid, listEl) {
     if (Object.keys(updates).length > 0) {
       const ps = await PromptStorageManager._ps();
       await ps.updatePrompt(promptUuid, { ...updates, updatedAt: new Date().toISOString() });
-      if (listEl) PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts());
+      if (listEl && PromptUIManager.state.listMode !== 'edit') PromptUIManager.refreshPromptList(await PromptStorageManager.getPrompts()); // #43 — don't wipe an open edit form
     }
   } catch (e) { console.warn('Auto-suggest failed:', e); }
 }

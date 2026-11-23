@@ -1,7 +1,7 @@
 // popup.js
 import * as PromptStorage from './promptStorage.js';
 import { checkConnection } from './ollama-service.js';
-import { scheduleBackup } from './autoBackup.js';
+import { writeBackup } from './autoBackup.js';
 import { t } from './i18n.js';
 
 // ─── Status ───────────────────────────────────────────────────────────────
@@ -30,11 +30,14 @@ let debounceTimer;
 // COMMENT: Guard element lookups — a missing element used to kill init entirely.
 searchInput?.addEventListener('input', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(loadPrompts, 200); });
 
+let loadSeq = 0; // #64 — drop stale overlapping renders
 async function loadPrompts() {
   if (!listEl) return;
+  const seq = ++loadSeq;
   listEl.innerHTML = '';
   const searchVal = searchInput.value.trim();
   let prompts = await PromptStorage.getPrompts();
+  if (seq !== loadSeq) return; // #64 — a newer load superseded this one
   prompts = prompts.filter(p => !p._archived);
 
   if (searchVal) {
@@ -70,7 +73,9 @@ async function loadPrompts() {
       try {
         await navigator.clipboard.writeText(p.content);
         await PromptStorage.bumpUseCount(p.uuid);
-        scheduleBackup();
+        // COMMENT: #63 — write the backup now and await completion; the old 2s
+        // debounce timer was killed by window.close() before it could fire.
+        await writeBackup(await PromptStorage.getPrompts()).catch(() => {});
         h4.textContent = t('popup_copied', null, 'Copied! ✓');
         h4.style.color = 'var(--color-success)';
         setTimeout(() => window.close(), 800);

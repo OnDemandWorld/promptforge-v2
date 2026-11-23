@@ -211,7 +211,52 @@ export async function setPrompts(prompts) {
   });
 }
 
-export async function savePrompt({ title, content, uuid, tags = [], folderId = null, categoryId = null, category = null, language = null, groupId = null }) {
+// COMMENT: #6 — run a read-modify-write inside the write lock. Callers that
+// snapshot state, do async work, then apply (e.g. the sync engine) use this to
+// re-read the freshest store at apply time so edits committed during their
+// multi-second span are not clobbered by a stale snapshot. fn(prompts, folders)
+// returns { prompts, folders } to write, or null/undefined to skip the write.
+export async function transact(fn) {
+  return withLock(async () => {
+    const { prompts, folders } = await readRawStorage();
+    const next = await fn(prompts, folders);
+    if (!next) return null;
+    await writeStore({ prompts: next.prompts, folders: next.folders });
+    return next;
+  });
+}
+
+// COMMENT: #36 — locked read-modify-write for panel reorder. Reading fresh
+// inside the lock (instead of bulk-replacing a render-time snapshot) preserves
+// prompts added/edited elsewhere since the list was rendered. Prompts not in
+// orderedUuids are appended so concurrent additions are never dropped.
+export async function reorderPrompts(orderedUuids) {
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const byUuid = new Map(prompts.map(p => [p.uuid, p]));
+    const ordered = [];
+    for (const uuid of orderedUuids) {
+      const p = byUuid.get(uuid);
+      if (p) { ordered.push(p); byUuid.delete(uuid); }
+    }
+    for (const p of byUuid.values()) ordered.push(p);
+    await writeStorage(ordered);
+    return ordered;
+  });
+}
+
+// COMMENT: #36 — locked read-modify-write to strip a tag from every prompt,
+// returning the updated array (callers recompute tag counts from it).
+export async function removeTagEverywhere(tag) {
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const updated = prompts.map(p => ({ ...p, tags: Array.isArray(p.tags) ? p.tags.filter(t => t !== tag) : [] }));
+    await writeStorage(updated);
+    return updated;
+  });
+}
+
+export async function savePrompt({ title, content, uuid, tags, folderId, categoryId, category, language, groupId }) {
   return withLock(async () => {
     if (!title && !content) throw new Error('Title or content is required');
     const prompts = await getPrompts();
@@ -220,13 +265,16 @@ export async function savePrompt({ title, content, uuid, tags = [], folderId = n
     // filter-deletes removed both.
     const existingIdx = uuid ? prompts.findIndex(p => p.uuid === uuid) : -1;
     if (existingIdx !== -1) {
-      prompts[existingIdx] = normalisePrompt({
-        ...prompts[existingIdx],
-        title, content, tags, folderId,
-        categoryId: categoryId || category,
-        language, groupId,
-        updatedAt: new Date().toISOString()
-      });
+      // COMMENT: #55 — only override fields the caller actually provided. The
+      // old destructured defaults (tags=[], language=null, …) wiped those
+      // fields on an existing prompt whenever a caller omitted them.
+      const patch = { title, content, updatedAt: new Date().toISOString() };
+      if (tags !== undefined) patch.tags = tags;
+      if (folderId !== undefined) patch.folderId = folderId;
+      if (categoryId !== undefined || category !== undefined) patch.categoryId = categoryId || category;
+      if (language !== undefined) patch.language = language;
+      if (groupId !== undefined) patch.groupId = groupId;
+      prompts[existingIdx] = normalisePrompt({ ...prompts[existingIdx], ...patch });
       await writeStorage(prompts);
       return { success: true, prompt: prompts[existingIdx] };
     }
@@ -318,30 +366,33 @@ export async function mergePrompts(imported) {
 // ---------------------------
 // Version History API
 // ---------------------------
+// COMMENT: #56 — shared in-lock version append (no read/write of its own) so
+// addVersion and restoreVersion can both resolve+append atomically under one
+// withLock. withLock is not reentrant, hence a plain helper rather than calling
+// addVersion from inside restoreVersion's lock.
+function applyVersion(prompts, idx, content, source, metadata) {
+  const versions = prompts[idx].versions || [];
+  // Dedup: skip if content identical to latest version
+  if (versions.length > 0 && versions[versions.length - 1].content === content) {
+    return versions[versions.length - 1];
+  }
+  const version = { content, source, metadata, createdAt: new Date().toISOString() };
+  if (!prompts[idx].versions) prompts[idx].versions = [];
+  prompts[idx].versions.push(version);
+  if (prompts[idx].versions.length > MAX_VERSIONS_PER_PROMPT) {
+    prompts[idx].versions = prompts[idx].versions.slice(-MAX_VERSIONS_PER_PROMPT);
+  }
+  prompts[idx].content = content;
+  prompts[idx].updatedAt = version.createdAt;
+  return version;
+}
+
 export async function addVersion(promptUuid, content, source = 'manual_edit', metadata = {}) {
   return withLock(async () => {
     const prompts = await getPrompts();
     const idx = prompts.findIndex(p => p.uuid === promptUuid);
     if (idx === -1) throw new Error('Prompt not found');
-    // Dedup: skip if content identical to latest version
-    const versions = prompts[idx].versions || [];
-    if (versions.length > 0 && versions[versions.length - 1].content === content) {
-      return versions[versions.length - 1];
-    }
-    const version = {
-      content,
-      source,
-      metadata,
-      createdAt: new Date().toISOString()
-    };
-    if (!prompts[idx].versions) prompts[idx].versions = [];
-    prompts[idx].versions.push(version);
-    if (prompts[idx].versions.length > MAX_VERSIONS_PER_PROMPT) {
-      prompts[idx].versions = prompts[idx].versions.slice(-MAX_VERSIONS_PER_PROMPT);
-    }
-    // Also update main content
-    prompts[idx].content = content;
-    prompts[idx].updatedAt = version.createdAt;
+    const version = applyVersion(prompts, idx, content, source, metadata);
     await writeStorage(prompts);
     return version;
   });
@@ -355,13 +406,19 @@ export async function getVersions(promptUuid) {
 }
 
 export async function restoreVersion(promptUuid, versionIndex) {
-  const prompts = await getPrompts();
-  const idx = prompts.findIndex(p => p.uuid === promptUuid);
-  if (idx === -1) throw new Error('Prompt not found');
-  const versions = prompts[idx].versions || [];
-  if (versionIndex < 0 || versionIndex >= versions.length) throw new Error('Version not found');
-  const version = versions[versionIndex];
-  return addVersion(promptUuid, version.content, 'manual_edit', { restoredFrom: versionIndex });
+  // COMMENT: #56 — resolve the version AND append inside one lock. The old code
+  // read versions[versionIndex] outside the lock, so a concurrent addVersion +
+  // trim could shift the index and restore the wrong version's content.
+  return withLock(async () => {
+    const prompts = await getPrompts();
+    const idx = prompts.findIndex(p => p.uuid === promptUuid);
+    if (idx === -1) throw new Error('Prompt not found');
+    const versions = prompts[idx].versions || [];
+    if (versionIndex < 0 || versionIndex >= versions.length) throw new Error('Version not found');
+    const version = applyVersion(prompts, idx, versions[versionIndex].content, 'manual_edit', { restoredFrom: versionIndex });
+    await writeStorage(prompts);
+    return version;
+  });
 }
 
 // ---------------------------
@@ -427,7 +484,12 @@ export async function movePromptToFolder(promptUuid, folderId = null) {
 // ---------------------------
 export async function addTagToPrompt(promptUuid, tag) {
   const clean = typeof tag === 'string' ? tag.trim() : '';
-  if (!clean) return await getPrompts();
+  // COMMENT: #59 — return the (unchanged) prompt, not the whole array, so the
+  // return type matches the normal path.
+  if (!clean) {
+    const prompts = await getPrompts();
+    return prompts.find(p => p.uuid === promptUuid) || null;
+  }
   // COMMENT: Compute the new tag set inside the locked mutation — an unlocked
   // read followed by updatePrompt lost one of two concurrent tag edits.
   return withLock(async () => {
@@ -460,7 +522,11 @@ export async function setTagsForPrompt(promptUuid, tags = []) {
 
 // ---------- import / export helpers ----------
 export async function exportPrompts() {
-  const json = JSON.stringify(await getPrompts(), null, 2);
+  // COMMENT: #33 — "Export All Data" must include folders (and the schema
+  // version), not just prompts; importPrompts already accepts this store shape.
+  const prompts = await getPrompts();
+  const folders = await getFolders();
+  const json = JSON.stringify({ version: PROMPT_STORAGE_VERSION, prompts, folders }, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

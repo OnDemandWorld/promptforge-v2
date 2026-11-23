@@ -27,6 +27,9 @@ zip -qr "$OUT" . \
   -x ".gitignore" \
   -x "content.js" "content.shared.js" "content.styles.js" \
   -x "inputBoxHandler.js" "ai-operations.js" \
-  -x "qwen-code-export-*"
+  -x "qwen-code-export-*" \
+  -x "BUILD_REPORT.md" "README.md" "CHANGELOG.md" \
+  -x ".ocr-reports/*" ".ocr-reports/" \
+  -x "*.txt"
 
 echo "Built $OUT ($(du -h "$OUT" | cut -f1))"

@@ -20,7 +20,7 @@
 // service workers, so sync happens while a PromptForge tab is open (polling
 // every 30s, on window focus, and 3s after local edits).
 
-import { getPrompts, getFolders, setPrompts, setFolders } from '../promptStorage.js';
+import { getPrompts, getFolders, transact } from '../promptStorage.js';
 import {
   loadDirHandle, clearDirHandle, getSyncSettings, patchSyncSettings, getDeviceId,
 } from './syncStore.js';
@@ -293,6 +293,22 @@ function foldConflicts(remote, extras) {
       const pt = new Date(p.updatedAt || 0).getTime();
       if (pt > et) Object.assign(existing, p);
     }
+    // COMMENT: #75 — also union tombstones (newest deletedAt per uuid) and
+    // folders from the copy. Dropping them lost deletions that existed only in
+    // a conflicted copy and let prompts resurrect after tombstone pruning.
+    if (Array.isArray(extra.tombstones)) {
+      const tm = new Map((merged.tombstones || []).map(t => [t.uuid, t]));
+      for (const t of extra.tombstones) {
+        const ex = tm.get(t.uuid);
+        if (!ex || new Date(t.deletedAt || 0).getTime() > new Date(ex.deletedAt || 0).getTime()) tm.set(t.uuid, t);
+      }
+      merged.tombstones = [...tm.values()];
+    }
+    if (Array.isArray(extra.folders)) {
+      const fm = new Map((merged.folders || []).map(f => [f.id, f]));
+      for (const f of extra.folders) if (!fm.has(f.id)) fm.set(f.id, f);
+      merged.folders = [...fm.values()];
+    }
   }
   return merged;
 }
@@ -304,16 +320,16 @@ function foldConflicts(remote, extras) {
  * @returns {Promise<'ok'|'disabled'|'needs-permission'|'error'>}
  */
 export async function runSyncCycle() {
-  if (_cycleRunning) return 'ok';
-  const settings = await getSyncSettings();
-  if (!settings || !settings.enabled || settings.paused) return 'disabled';
-  if (settings.transport === 'native') return runNativeCycle(settings);
-
-  const handle = await loadDirHandle();
-  if (!handle) return 'disabled';
-
-  _cycleRunning = true;
+  if (_cycleRunning) return 'busy'; // #50 — distinct status (was 'ok', masking skips)
+  _cycleRunning = true; // #50 — set synchronously BEFORE any await so two triggers can't both enter
   try {
+    const settings = await getSyncSettings();
+    if (!settings || !settings.enabled || settings.paused) return 'disabled';
+    if (settings.transport === 'native') return await runNativeCycle(settings);
+
+    const handle = await loadDirHandle();
+    if (!handle) return 'disabled';
+
     const perm = await handle.queryPermission({ mode: 'readwrite' });
     if (perm !== 'granted') {
       await patchSyncSettings({ needsPermission: true });
@@ -328,23 +344,40 @@ export async function runSyncCycle() {
     const remoteRead = await readSyncFile(handle);
     const remote = foldConflicts(remoteRead ? remoteRead.data : null, conflicted);
 
-    const result = mergeAll(localPrompts, localFolders, remote, shadow, deviceId);
+    let result = mergeAll(localPrompts, localFolders, remote, shadow, deviceId);
 
-    // Apply remote-driven changes to local storage under the loop guard.
-    if (result.localChanged) {
-      _applyingRemote = true;
-      try {
-        await setFolders(result.folders);
-        await setPrompts(result.prompts);
-      } finally {
-        // Release after the storage listeners have fired (they're async).
-        setTimeout(() => { _applyingRemote = false; }, 100);
-      }
+    // COMMENT: #6 — apply under the storage write lock, re-merging against the
+    // freshest local state. The snapshot above was read seconds ago (FS reads,
+    // RPCs); a plain setPrompts(result.prompts) would clobber any edit the user
+    // committed in that window. transact re-reads inside the lock and re-merges.
+    let applied = null;
+    _applyingRemote = true;
+    try {
+      applied = await transact((curPrompts, curFolders) => {
+        result = mergeAll(curPrompts, curFolders, remote, shadow, deviceId);
+        if (!result.localChanged) return null;
+        return { prompts: result.prompts, folders: result.folders };
+      });
+    } finally {
+      // Release after the storage listeners have fired (they're async); if no
+      // write happened, drop the guard immediately so user edits aren't skipped.
+      if (applied) setTimeout(() => { _applyingRemote = false; }, 3000); // #76 — safety fallback; the storage listener normally clears it first
+      else _applyingRemote = false;
     }
 
     // Push the merged state to the file when either side contributed changes,
     // or when the file doesn't exist yet (seeding a new sync folder).
     if (result.remoteChanged || !remote) {
+      // COMMENT: #51 — if the file changed since we read it (another device's
+      // newer version arrived via the cloud client), skip the write rather than
+      // clobber it; the next cycle re-reads and merges the fresh remote.
+      if (remoteRead) {
+        const freshRead = await readSyncFile(handle);
+        if (freshRead && freshRead.mtime !== remoteRead.mtime) {
+          await patchSyncSettings({ lastSyncAt: new Date().toISOString(), lastError: null });
+          return 'ok';
+        }
+      }
       const payload = {
         format: 1,
         updatedAt: new Date().toISOString(),
@@ -354,8 +387,12 @@ export async function runSyncCycle() {
         tombstones: result.tombstones,
       };
       await writeSyncFile(handle, payload);
-      await saveShadow(result.prompts, result.folders, result.tombstones);
     }
+    // COMMENT: #5 — always record the merged state as the new shadow, even on
+    // pull-only cycles (remoteChanged=false). The old code skipped saveShadow
+    // when it didn't write the file, leaving stale digests that made a later
+    // local deletion look like a remote edit and resurrected the prompt.
+    await saveShadow(result.prompts, result.folders, result.tombstones);
 
     await patchSyncSettings({ lastSyncAt: new Date().toISOString(), lastError: null });
     return 'ok';
@@ -373,7 +410,8 @@ export async function runSyncCycle() {
  * The host owns the folder choice (~/.promptforge-sync/config.json).
  */
 async function runNativeCycle(settings) {
-  _cycleRunning = true;
+  // #50 — _cycleRunning is owned by runSyncCycle (set before dispatch, reset in
+  // its finally); don't manage it here or the guard drops mid-cycle.
   try {
     const ping = await nativeRPC({ op: 'ping' }, 5000);
     if (!ping.ok) {
@@ -397,20 +435,38 @@ async function runNativeCycle(settings) {
       await patchSyncSettings({ lastError: remoteReply.error });
       return 'error';
     }
-    const remote = foldConflicts(remoteReply.data, (conflictedReply.ok && conflictedReply.copies) || []);
-    const result = mergeAll(localPrompts, localFolders, remote, shadow, deviceId);
+    // COMMENT: #48 — the host returns copies as [{name,data}] wrappers, but
+    // foldConflicts expects raw payloads (it skips anything without .prompts).
+    // Unwrap .data so native conflicted copies are actually folded.
+    const conflictedData = ((conflictedReply.ok && conflictedReply.copies) || []).map(c => c && c.data).filter(Boolean);
+    const remote = foldConflicts(remoteReply.data, conflictedData);
+    let result = mergeAll(localPrompts, localFolders, remote, shadow, deviceId);
 
-    if (result.localChanged) {
-      _applyingRemote = true;
-      try {
-        await setFolders(result.folders);
-        await setPrompts(result.prompts);
-      } finally {
-        setTimeout(() => { _applyingRemote = false; }, 100);
-      }
+    // COMMENT: #6 — re-merge against fresh local state inside the write lock
+    // (see fsaccess path above) so mid-cycle user edits are not clobbered.
+    let applied = null;
+    _applyingRemote = true;
+    try {
+      applied = await transact((curPrompts, curFolders) => {
+        result = mergeAll(curPrompts, curFolders, remote, shadow, deviceId);
+        if (!result.localChanged) return null;
+        return { prompts: result.prompts, folders: result.folders };
+      });
+    } finally {
+      if (applied) setTimeout(() => { _applyingRemote = false; }, 3000); // #76 — safety fallback; the storage listener normally clears it first
+      else _applyingRemote = false;
     }
 
     if (result.remoteChanged || !remote) {
+      // COMMENT: #51 — re-read mtime via the host; skip the write if the file
+      // changed under us (cross-device clobber protection, mirrors fsaccess).
+      if (remoteReply.data) {
+        const freshReply = await nativeRPC({ op: 'read' });
+        if (freshReply.ok && freshReply.data && freshReply.mtime !== remoteReply.mtime) {
+          await patchSyncSettings({ lastSyncAt: new Date().toISOString(), lastError: null });
+          return 'ok';
+        }
+      }
       const payload = {
         format: 1,
         updatedAt: new Date().toISOString(),
@@ -424,8 +480,10 @@ async function runNativeCycle(settings) {
         await patchSyncSettings({ lastError: w.error });
         return 'error';
       }
-      await saveShadow(result.prompts, result.folders, result.tombstones);
     }
+    // COMMENT: #5 — always update the shadow after a successful merge (see
+    // fsaccess path above); a failed write returns early without touching it.
+    await saveShadow(result.prompts, result.folders, result.tombstones);
 
     await patchSyncSettings({ lastSyncAt: new Date().toISOString(), lastError: null });
     return 'ok';
@@ -433,8 +491,6 @@ async function runNativeCycle(settings) {
     await patchSyncSettings({ lastError: e.message || String(e) });
     console.error('[PromptForge] native sync cycle failed:', e);
     return 'error';
-  } finally {
-    _cycleRunning = false;
   }
 }
 
@@ -480,6 +536,10 @@ export function startSyncWatcher() {
   if (_storageListener) stopSyncWatcher();
   _storageListener = (changes, area) => {
     if (area !== 'local' || !changes.prompts_storage) return;
+    // COMMENT: #76 — the first prompts_storage change after a remote apply is
+    // our own write; consume it and clear the guard here (event-driven) rather
+    // than relying solely on a fixed timer that could swallow a user edit.
+    if (_applyingRemote) { _applyingRemote = false; return; }
     scheduleSync();
   };
   chrome.storage.onChanged.addListener(_storageListener);

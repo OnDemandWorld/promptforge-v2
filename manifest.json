@@ -62,7 +62,7 @@
                 "*://www.perplexity.ai/*",
                 "*://www.genspark.ai/*",
                 "*://poe.com/*",
-                "*://github.com/*",
+                "*://github.com/copilot*",
                 "*://www.kimi.com/*",
                 "*://chat.mistral.ai/*",
                 "*://platform.openai.com/*",
@@ -71,7 +71,7 @@
                 "*://lmarena.ai/*",
                 "*://chat.qwen.ai/*",
                 "*://notebooklm.google.com/*",
-                "*://apps.abacus.ai/*"
+                "*://apps.abacus.ai/chatllm*"
             ]
         }
     ],

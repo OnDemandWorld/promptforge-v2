@@ -40,6 +40,18 @@ function saveConfig(cfg) {
 
 function send(msg) {
   const buf = Buffer.from(JSON.stringify(msg), 'utf8');
+  // COMMENT: #49 — Chrome terminates a native host that sends a single message
+  // larger than 1MB. Return a structured error instead of an oversized frame
+  // (which would kill the host and permanently break native sync for large
+  // libraries). Longer term: page/chunk the read op or trim version history.
+  if (buf.length > 1024 * 1024) {
+    const err = Buffer.from(JSON.stringify({ ok: false, error: 'Sync payload exceeds the 1MB native messaging limit' }), 'utf8');
+    const eh = Buffer.alloc(4);
+    eh.writeUInt32LE(err.length, 0);
+    process.stdout.write(eh);
+    process.stdout.write(err);
+    return;
+  }
   const header = Buffer.alloc(4);
   header.writeUInt32LE(buf.length, 0);
   process.stdout.write(header);
@@ -118,13 +130,17 @@ function handle(msg) {
     case 'write': {
       const f = syncFilePath(cfg);
       if (!f) return { ok: false, error: 'No sync folder configured' };
+      // Atomic: write temp file in the same directory, then rename.
+      const tmp = f + '.tmp-' + process.pid;
       try {
-        // Atomic: write temp file in the same directory, then rename.
-        const tmp = f + '.tmp-' + process.pid;
         fs.writeFileSync(tmp, JSON.stringify(msg.payload, null, 2));
         fs.renameSync(tmp, f);
         return { ok: true };
       } catch (e) {
+        // COMMENT: #78 — remove the orphaned temp file on failure (e.g. rename
+        // blocked by antivirus); each retry uses a new pid, so without cleanup
+        // the cloud folder fills with .tmp-<pid> files synced to every device.
+        try { fs.unlinkSync(tmp); } catch { /* best-effort */ }
         return { ok: false, error: e.message };
       }
     }

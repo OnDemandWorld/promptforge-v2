@@ -72,9 +72,17 @@ export async function getSyncSettings() {
   } catch { return null; }
 }
 
+// COMMENT: #77 — serialize read-modify-write patches on a shared chain so two
+// overlapping patches (e.g. cycle completion vs user Pause) can't drop each
+// other's fields via a stale 'current' snapshot.
+let _settingsChain = Promise.resolve();
 export async function patchSyncSettings(patch) {
-  const current = (await getSyncSettings()) || {};
-  await chrome.storage.local.set({ [SETTINGS_KEY]: { ...current, ...patch } });
+  const run = _settingsChain.then(async () => {
+    const current = (await getSyncSettings()) || {};
+    await chrome.storage.local.set({ [SETTINGS_KEY]: { ...current, ...patch } });
+  });
+  _settingsChain = run.catch(() => {});
+  return run;
 }
 
 export async function clearSyncSettings() {

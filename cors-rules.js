@@ -17,8 +17,9 @@
 // editor), so the rule is scoped to THIS extension's id only — no web page,
 // provider or otherwise, gets its origin rewritten.
 //
-// Fallback: if Chrome ever rejects the self-scoped rule, it is retried
-// WITHOUT initiator scoping (degraded but functional; logged loudly).
+// If Chrome ever rejects the self-scoped rule, the extension fails CLOSED
+// (AI features 403) rather than installing an unscoped rule that would expose
+// local Ollama to every website (#18).
 
 import { DEFAULTS } from './ollama-service.js';
 
@@ -73,18 +74,16 @@ export async function syncOllamaCorsRules() {
     });
     return;
   } catch (e) {
-    console.warn('[PromptForge] Self-scoped Ollama CORS rule rejected, falling back to unscoped:', e);
+    console.warn('[PromptForge] Self-scoped Ollama CORS rule rejected; failing closed:', e);
   }
 
-  // Fallback: unscoped (any initiator reaching the Ollama host gets the
-  // rewrite). Degraded posture, functional extension.
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      addRules: [rewriteRule(host, null)],
-    });
-  } catch (e) {
-    console.error('[PromptForge] Failed to install Ollama CORS rule — AI features will 403:', e);
-  }
+  // COMMENT: #18 — fail CLOSED. The old fallback installed an UNSCOPED rule
+  // (any initiator reaching the Ollama host got Origin rewritten to the
+  // allow-listed http://localhost), re-exposing local Ollama to CSRF-style
+  // writes from any web page — exactly what the v2.2 audit removed. If the
+  // self-scoped rule cannot be installed, leave AI features disabled (403)
+  // rather than broaden the initiator scope.
+  console.error('[PromptForge] Self-scoped Ollama CORS rule could not be installed — AI features will 403 (failing closed, not widening origin scope).');
 }
 
 // Remove the rule entirely (e.g. on uninstall or when the URL is cleared).

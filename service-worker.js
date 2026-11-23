@@ -1,4 +1,4 @@
-import { getProviders } from './integration-manager.js';
+import { getProviders, urlMatchesPattern } from './integration-manager.js';
 import { getPrompts, onPromptsChanged, savePrompt, bumpUseCount } from './promptStorage.js';
 import { checkConnection, improvePrompt, generateVariants, suggestAllMetadata, translatePrompt } from './ollama-service.js';
 import { syncOllamaCorsRules } from './cors-rules.js';
@@ -88,14 +88,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         // COMMENT: Inject on all 19 LLM sites regardless of host permission —
         // the panel is purely write-only (prompt injection); no site access
         // beyond the page's own DOM is required.
-        // COMMENT: Escape every regex metachar, then convert the escaped
-        // wildcard back — the old escaper missed +, (, ?, etc.
-        const regexPattern = originPattern
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          .replace(/\\\*/g, '.*');
-        const urlRegex = new RegExp(`^${regexPattern}`);
-
-        if (urlRegex.test(tab.url)) {
+        // COMMENT: #17 — use proper match-pattern semantics (host-anchored),
+        // not a regex whose '.*' scheme prefix could match a provider URL
+        // embedded in another site's query string.
+        if (urlMatchesPattern(originPattern, tab.url)) {
           try {
             // COMMENT: Pre-check the init flag (same guard onAdded uses) so the
             // onUpdated/onAdded race can't double-inject. The previous probe
@@ -256,8 +252,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
   if (info.menuItemId.startsWith('prompt-')) {
+    if (!tab) return; // #58 — some menu contexts have no tab
     const uuid = info.menuItemId.replace('prompt-', '');
-    const prompts = await getPrompts();
+    let prompts;
+    try { prompts = await getPrompts(); } catch (err) { console.error('[PromptForge] menu prompt load failed:', err); return; } // #58
     const prompt = prompts.find(p => p.uuid === uuid);
     if (prompt) {
       // COMMENT: Route through content script so variables are processed and injection is handled properly
@@ -350,7 +348,7 @@ chrome.runtime.onConnect.addListener((port) => {
         const variants = await generateVariants(msg.promptText, msg.count, { signal, language: msg.language });
         port.postMessage({ id, result: variants });
       } else if (op === 'suggest') {
-        const metadata = await suggestAllMetadata(msg.promptText, msg.language);
+        const metadata = await suggestAllMetadata(msg.promptText, msg.language, signal); // #60
         port.postMessage({ id, result: metadata });
       } else if (op === 'check') {
         port.postMessage({ id, result: await checkConnection() });

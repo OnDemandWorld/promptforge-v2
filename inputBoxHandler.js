@@ -8,6 +8,9 @@
 // and used to re-fetch the bundled JSON each time. Not cached on failure
 // (stays null) so a transient error doesn't poison lookups for the tab's life.
 let _providersCache = null;
+// COMMENT: #44 — cache resolved shadow-DOM inputs so repeated polls/selector
+// misses don't each walk every element on the page; revalidated before reuse.
+const _shadowInputCache = new Map();
 async function loadProviders() {
   if (_providersCache) return _providersCache;
   try {
@@ -68,13 +71,19 @@ class InputBoxHandler {
   static _findInShadowDom(selector, root = document) {
     // COMMENT: True recursion — the old version hardcoded two shadow levels
     // and missed deeper nesting. Closed roots remain invisible by design.
+    // COMMENT: #44 — reuse a cached, still-connected match to avoid a full
+    // querySelectorAll('*') traversal on every poll/selector miss.
+    if (root === document) {
+      const cached = _shadowInputCache.get(selector);
+      if (cached && cached.isConnected && cached.matches(selector)) return cached;
+    }
     const hosts = root.querySelectorAll('*');
     for (const el of hosts) {
       if (!el.shadowRoot) continue;
       const found = el.shadowRoot.querySelector(selector);
-      if (found) return found;
+      if (found) { if (root === document) _shadowInputCache.set(selector, found); return found; }
       const deep = InputBoxHandler._findInShadowDom(selector, el.shadowRoot);
-      if (deep) return deep;
+      if (deep) { if (root === document) _shadowInputCache.set(selector, deep); return deep; }
     }
     return null;
   }
@@ -335,20 +344,33 @@ class InputBoxHandler {
           inputBox.innerText = content + '  ';
           inputBox.dispatchEvent(new Event('input', { bubbles: true }));
         }
-      } else if (inputBox.tagName.toLowerCase() === 'textarea') {
-        // COMMENT: For textareas, either overwrite or append
+      } else if (inputBox.tagName.toLowerCase() === 'textarea' || inputBox.tagName.toLowerCase() === 'input') {
+        // COMMENT: #7 — handle plain <input> (e.g. OpenRouter) as well as
+        // <textarea>; the old else-branch logged "Unknown input box type" and
+        // inserted nothing for OpenRouter's input[type=text].
+        // COMMENT: #8 — set the value through the NATIVE prototype setter so
+        // React's value tracker is bypassed; a plain .value assignment updates
+        // the tracker and the synthetic input event is deduped (onChange never
+        // fires, so the provider's state stays empty).
+        const tag = inputBox.tagName.toLowerCase();
+        const proto = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        let newValue;
         if (disableOverwrite) {
           const existing = inputBox.value || '';
           const needsSpace = existing && !/\s$/.test(existing);
           const spacer = needsSpace ? ' ' : '';
-          inputBox.value = existing + spacer + content + '  ';
+          newValue = existing + spacer + content + '  ';
         } else {
-          inputBox.value = content + '  ';
+          newValue = content + '  ';
         }
+        nativeSetter.call(inputBox, newValue);
         inputBox.dispatchEvent(new Event('input', { bubbles: true }));
         inputBox.dispatchEvent(new Event('change', { bubbles: true }));
-        inputBox.style.height = 'auto';
-        inputBox.style.height = `${inputBox.scrollHeight}px`;
+        if (tag === 'textarea') {
+          inputBox.style.height = 'auto';
+          inputBox.style.height = `${inputBox.scrollHeight}px`;
+        }
       } else {
         console.error('Unknown input box type.', { inputBox });
         return;

@@ -17,7 +17,11 @@ async function _loadProviders() {
     }));
   } catch (e) {
     console.error('[IntegrationManager] Failed to load llm_providers.json:', e);
-    _providers = [];
+    // COMMENT: #16 — do NOT cache the failure: [] is truthy, so the old
+    // `_providers = []` was returned forever and injection/Send-to-Tab stayed
+    // dead for the whole SW lifetime. Leave _providers null so the next call
+    // retries (mirrors inputBoxHandler.loadProviders).
+    return [];
   }
   return _providers;
 }
@@ -25,6 +29,32 @@ async function _loadProviders() {
 export async function getProviders() {
   const providers = await _loadProviders();
   return providers || []; // never return null
+}
+
+// COMMENT: #17 — correct Chrome match-pattern semantics for tab URLs. The old
+// hand-rolled regex turned '*://host/*' into /^.*://host\/.*/, whose leading
+// '.*' absorbed a preceding URL (https://evil.com/?next=https://chatgpt.com/
+// matched). Parse the URL and compare scheme/host/path explicitly instead.
+export function urlMatchesPattern(pattern, url) {
+  try {
+    const m = /^(\*|https?):\/\/([^/]+)(\/.*)$/.exec(pattern);
+    if (!m) return false;
+    const u = new URL(url);
+    const scheme = m[1], host = m[2], path = m[3];
+    if (scheme !== '*' && u.protocol !== scheme + ':') return false;
+    if (host !== '*') {
+      if (host.startsWith('*.')) {
+        const base = host.slice(2);
+        if (u.hostname !== base && !u.hostname.endsWith('.' + base)) return false;
+      } else if (u.hostname !== host) {
+        return false;
+      }
+    }
+    const pathRe = new RegExp('^' + path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*') + '$');
+    return pathRe.test(u.pathname);
+  } catch {
+    return false;
+  }
 }
 
 export async function getOpenAiSiteTabs() {

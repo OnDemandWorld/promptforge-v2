@@ -57,7 +57,10 @@ export default [
       sourceType: 'module',
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // COMMENT: #79 — also ignore catch params and destructured-array placeholders
+      // matching '^_', per the documented convention; otherwise every `catch (_)`
+      // and `const [_, x]` is flagged and the warning noise hides real dead code.
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_', destructuredArrayIgnorePattern: '^_' }],
       'no-console': 'off',
       'no-constant-condition': 'off',
       'no-empty': 'warn',

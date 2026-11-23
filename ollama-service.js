@@ -209,7 +209,10 @@ async function ollamaChat(systemPrompt, userMessage, options = {}) {
   // letting a stalled stream hang until the user clicked Stop).
   const controller = new AbortController();
   let tid = null;
-  if (timeout) tid = setTimeout(() => controller.abort(), timeout);
+  // COMMENT: #27 — abort with a reason so a timeout ('...timed out') is
+  // distinguishable from a user Stop (DOMException 'aborted'); callers suppress
+  // only the latter, so timeouts now surface a toast instead of failing silently.
+  if (timeout) tid = setTimeout(() => controller.abort(new Error('Ollama request timed out')), timeout);
   if (signal) {
     if (signal.aborted) controller.abort();
     else signal.addEventListener('abort', () => controller.abort(), { once: true });
@@ -283,9 +286,16 @@ async function* ollamaStreamGenerator(body, onDone) {
         if (!line.trim()) continue;
         try {
           const data = JSON.parse(line);
+          // COMMENT: #15 — a mid-stream {"error":...} (runner crash/OOM/context
+          // overflow) has no message/done fields; the old code skipped it and
+          // ended "successfully", saving truncated output. Surface it instead.
+          if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
           if (data.message?.content) yield data.message.content;
           if (data.done) return;
-        } catch { /* skip malformed */ }
+        } catch (e) {
+          if (e instanceof SyntaxError) continue; // skip malformed JSON line
+          throw e;
+        }
       }
     }
   } finally {
@@ -470,6 +480,11 @@ Return only the translated prompt.`;
 }
 
 export async function* improvePrompt(promptText, options = {}) {
+  // COMMENT: #14 — honor the Thinking Mode setting (and an explicit override)
+  // like generateVariants does. Hardcoding think:true 400s on non-thinking
+  // models and ignores the user's off preference.
+  const settings = await getOllamaSettings();
+  const think = options.think !== undefined ? options.think : (settings.useThinking !== false);
   const userMessage = `Rewrite this prompt to be clearer and more effective:
 
 <prompt>
@@ -480,7 +495,7 @@ Return only the rewritten prompt.`;
   // COMMENT: v3 feature D-II — system prompt carries the target-language
   // directive when the prompt has a known language.
   yield* await ollamaChat(makeImproveSystemPrompt(options.language), userMessage, {
-    temperature: 0.7, maxTokens: 2048, timeout: 90000, stream: true, think: true, signal: options.signal
+    temperature: 0.7, maxTokens: 2048, timeout: 90000, stream: true, think, signal: options.signal
   });
 }
 
@@ -512,7 +527,7 @@ Return only a JSON array of ${clampedCount} strings.`;
   throw new Error('Model returned no usable variants');
 }
 
-export async function suggestTitle(promptText, language = null) {
+export async function suggestTitle(promptText, language = null, signal = null) {
   const raw = await ollamaChat(makeTitleSystemPrompt(language),
 `Read the prompt below and produce a 3-7 word title that captures its core task.
 
@@ -521,12 +536,12 @@ ${promptText}
 </prompt>
 
 Return only the title.`, {
-    temperature: 0.3, maxTokens: 20, timeout: 15000, stream: false, think: false
+    temperature: 0.3, maxTokens: 20, timeout: 15000, stream: false, think: false, signal // #60
   });
   return cleanTitle(raw);
 }
 
-export async function suggestTags(promptText, language = null) {
+export async function suggestTags(promptText, language = null, signal = null) {
   const raw = await ollamaChat(makeTagsSystemPrompt(language),
 `Read the prompt below and assign 2 to 5 lowercase tags.
 
@@ -535,7 +550,7 @@ ${promptText}
 </prompt>
 
 Return only a JSON array.`, {
-    temperature: 0.3, maxTokens: 80, timeout: 15000, stream: false, think: false
+    temperature: 0.3, maxTokens: 80, timeout: 15000, stream: false, think: false, signal // #60
   });
 
   try {
@@ -551,7 +566,7 @@ Return only a JSON array.`, {
   const tags = raw
     .split(/[,;\n]+/)
     .map(t => t.trim().toLowerCase().replace(quoteStripper, ''))
-    .map(t => t.replace(/[{}[\]/\\<>"':|=+!@#$%^&*~`()-]/g, ''))
+    .map(t => t.replace(/[{}[\]/\\<>"':|=+!@#$%^&*~`()]/g, '')) // #57 — keep hyphens (code-review stays code-review)
     .map(t => t.replace(/^(json|markdown|code\s*block|example|here|is|the|of|and|a)\s*/gi, ''))
     .map(t => t.replace(/\s+/g, '-'))  // collapse whitespace to hyphens
     // COMMENT: v3 feature D-II — Unicode-aware so CJK tags survive the
@@ -562,7 +577,7 @@ Return only a JSON array.`, {
   return tags.length > 0 ? tags : ['untagged'];
 }
 
-export async function suggestCategory(promptText) {
+export async function suggestCategory(promptText, signal = null) {
   const raw = await ollamaChat(CATEGORY_SYSTEM_PROMPT,
 `Classify the prompt below into exactly one category.
 
@@ -571,16 +586,18 @@ ${promptText}
 </prompt>
 
 Return only the category name.`, {
-    temperature: 0.1, maxTokens: 15, timeout: 15000, stream: false, think: false
+    temperature: 0.1, maxTokens: 15, timeout: 15000, stream: false, think: false, signal // #60
   });
   return cleanCategory(raw);
 }
 
-export async function suggestAllMetadata(promptText, language = null) {
+export async function suggestAllMetadata(promptText, language = null, signal = null) {
+  // COMMENT: #60 — accept and forward a cancel signal so the SW's {cancel:true}
+  // actually aborts the three suggest calls instead of running to their timeouts.
   const [titleResult, tagsResult, categoryResult] = await Promise.allSettled([
-    suggestTitle(promptText, language),
-    suggestTags(promptText, language),
-    suggestCategory(promptText)
+    suggestTitle(promptText, language, signal),
+    suggestTags(promptText, language, signal),
+    suggestCategory(promptText, signal)
   ]);
 
   return {

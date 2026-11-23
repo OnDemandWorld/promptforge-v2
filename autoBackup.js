@@ -1,10 +1,14 @@
 // autoBackup.js — File-based backup for cross-computer prompt sync
 //
 // Strategy:
-// 1. User picks a backup file location via Chrome's save-as dialog (saveAs: true)
+// 1. Backups are written to a FIXED path under the Downloads directory
+//    (Downloads/promptforge/promptforge-backup.json). chrome.downloads can only
+//    write inside Downloads, so a save-as dialog could not honor an arbitrary
+//    location for the recurring writes (#4) — the path is deterministic instead.
 // 2. Subsequent auto-backups overwrite that same path via chrome.downloads.download
 // 3. On app open, user can merge from the backup file
-// 4. If the user uses iCloud/Dropbox, the backup file syncs across machines
+// 4. To sync across machines, point iCloud/Dropbox at the Downloads/promptforge
+//    folder (or import the backup file manually on the other machine).
 
 import { PROMPT_STORAGE_VERSION, getFolders, getPrompts, importPrompts } from './promptStorage.js';
 
@@ -28,10 +32,44 @@ async function saveSettings(settings) {
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
 
+// COMMENT: #12/#13 — wait for a download's terminal state via onChanged instead
+// of a short fixed poll. The blob URL is revoked only once the download finishes
+// (revoking early invalidates an in-progress download); on timeout we resolve
+// WITHOUT revoking so a slow download is not sabotaged. Resolves with the
+// terminal state ('complete' | 'interrupted' | 'cancelled') or 'timeout'.
+function waitForDownload(downloadId, url, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      chrome.downloads.onChanged.removeListener(onChanged);
+      clearTimeout(safety);
+      if (state !== 'timeout') URL.revokeObjectURL(url);
+      resolve(state);
+    };
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId || !delta.state) return;
+      const st = delta.state.current;
+      if (st === 'complete' || st === 'interrupted' || st === 'cancelled') finish(st);
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+    const safety = setTimeout(() => finish('timeout'), timeoutMs);
+    // Catch a state that already settled before the listener attached.
+    chrome.downloads.search({ id: downloadId }, (items) => {
+      const st = items && items[0] && items[0].state;
+      if (st === 'complete' || st === 'interrupted' || st === 'cancelled') finish(st);
+    });
+  });
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 /**
- * Open Chrome's save-as dialog so the user can pick where to save the backup.
+ * Write the first backup to the fixed Downloads path and enable auto-backup.
+ * COMMENT: #4 — uses saveAs:false so the file lands exactly at BACKUP_PATH,
+ * which is what writeBackup() overwrites on every later cycle. A save-as
+ * dialog let the user pick a location the recurring writes could not honor.
  * @param {Array} prompts - Array of prompt objects to write.
  * @returns {{ mode: string, enabled: boolean, filePath: string|null }}
  */
@@ -51,7 +89,7 @@ export async function pickBackupFile(prompts) {
     chrome.downloads.download({
       url,
       filename: BACKUP_PATH,
-      saveAs: true,
+      saveAs: false,
       conflictAction: 'overwrite'
     }, (id) => {
       if (chrome.runtime.lastError) {
@@ -63,42 +101,15 @@ export async function pickBackupFile(prompts) {
     });
   });
 
-  // Poll for download completion
-  return new Promise((resolve) => {
-    let attempts = 0;
-    const poll = setInterval(async () => {
-      attempts++;
-      try {
-        const items = await new Promise((r) => chrome.downloads.search({ id: downloadId }, r));
-        if (items && items.length > 0) {
-          const item = items[0];
-          if (item.state === 'complete') {
-            clearInterval(poll);
-            URL.revokeObjectURL(url);
-            saveSettings({ mode: 'file', enabled: true, downloadPath: BACKUP_PATH });
-            resolve({ mode: 'file', enabled: true, filePath: BACKUP_PATH });
-            return;
-          }
-          if (item.state === 'interrupted' || item.state === 'cancelled') {
-            // COMMENT: A cancelled/interrupted save-as must NOT leave backups
-            // "enabled" — the old code silently enabled writes to the default
-            // Downloads path when the user said no.
-            clearInterval(poll);
-            URL.revokeObjectURL(url);
-            resolve({ mode: 'file', enabled: false, filePath: null });
-            return;
-          }
-        }
-      } catch {
-        // ignore polling errors
-      }
-      if (attempts >= 30) {
-        clearInterval(poll);
-        URL.revokeObjectURL(url);
-        resolve({ mode: 'file', enabled: false, filePath: null });
-      }
-    }, 500);
-  });
+  // COMMENT: #12 — wait for the terminal state (no 15s guillotine that revoked
+  // the blob while the download was still starting). A cancelled/interrupted
+  // download must NOT leave backups "enabled".
+  const state = await waitForDownload(downloadId, url, 120000);
+  if (state === 'complete') {
+    saveSettings({ mode: 'file', enabled: true, downloadPath: BACKUP_PATH });
+    return { mode: 'file', enabled: true, filePath: BACKUP_PATH };
+  }
+  return { mode: 'file', enabled: false, filePath: null };
 }
 
 /**
@@ -138,17 +149,30 @@ export async function writeBackup(prompts) {
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
 
-  chrome.downloads.download({
-    url,
-    filename: settings.downloadPath || BACKUP_PATH,
-    saveAs: false,
-    conflictAction: 'overwrite'
-  }, () => {
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    if (chrome.runtime.lastError) {
-      console.error('[PromptForge] Backup write failed:', chrome.runtime.lastError.message);
-    }
+  const downloadId = await new Promise((resolve, reject) => {
+    chrome.downloads.download({
+      url,
+      filename: settings.downloadPath || BACKUP_PATH,
+      saveAs: false,
+      conflictAction: 'overwrite'
+    }, (id) => {
+      if (chrome.runtime.lastError) {
+        URL.revokeObjectURL(url);
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(id);
+    });
   });
+
+  // COMMENT: #13 — the download callback fires at START, not completion. Wait
+  // for the terminal state and surface interrupted/cancelled failures instead
+  // of silently leaving a stale backup; revoke the blob only once done (the
+  // old 1s revoke could invalidate a large download mid-flight).
+  const state = await waitForDownload(downloadId, url, 60000);
+  if (state === 'interrupted' || state === 'cancelled') {
+    console.error('[PromptForge] Backup write failed: download ' + state);
+  }
 }
 
 /**
@@ -193,8 +217,12 @@ export async function autoImport() {
   if (!backupPrompts) return 0;
   if (Array.isArray(backupPrompts) && backupPrompts.length === 0) return 0;
 
+  // COMMENT: #53 — return the net number of prompts added, not the total
+  // library size, so the "Merged N prompts" toast is accurate.
+  const before = (await getPrompts()).length;
   const merged = await importPrompts(backupPrompts);
-  return Array.isArray(merged) ? merged.length : 0;
+  const after = Array.isArray(merged) ? merged.length : 0;
+  return Math.max(0, after - before);
 }
 
 /**

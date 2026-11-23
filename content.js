@@ -23,7 +23,7 @@
 // COMMENT: C1 — content scripts ship as one bundle (content.bundle.js, built
 // from content.bundle.entry.js). AI operations are a static import now, so
 // ai-operations.js no longer needs to be web-accessible.
-import { improvePrompt as aiImprovePrompt, generateVariants as aiGenerateVariants, autoSuggestMetadata as aiAutoSuggestMetadata, translatePrompt as aiTranslatePrompt } from './ai-operations.js';
+import { improvePrompt as aiImprovePrompt, generateVariants as aiGenerateVariants, autoSuggestMetadata as aiAutoSuggestMetadata, translatePrompt as aiTranslatePrompt, translateText as aiTranslateText } from './ai-operations.js';
 import { detectLanguage, SUPPORTED_LANGUAGES, DEFAULT_PROMPT_LANGUAGES, languageMeta } from './language.js';
 import { t, relativeTimeLocalized } from './i18n.js';
 import { CATEGORIES as PF_CATEGORY_DEFS } from './categories.js';
@@ -483,6 +483,7 @@ const PanelRouter = (() => {
     Theme.applyAll();
   };
 
+  let mountSeq = 0; // #39 — drop stale async mount completions
   const mount = async (view, context = undefined) => {
     const definition = VIEW_DEFINITIONS[view];
     if (!definition) return;
@@ -500,12 +501,14 @@ const PanelRouter = (() => {
       return;
     }
 
+    const seq = ++mountSeq; // #39
     state.currentView = view;
     PromptUIManager.inVariableInputMode = (view === PanelView.VARIABLE_INPUT);
 
     if (definition.kind === 'list') {
       applyViewChrome(definition);
       await definition.controller(listEl);
+      if (seq !== mountSeq) return; // #39 — superseded while awaiting storage
       return;
     }
 
@@ -524,6 +527,7 @@ const PanelRouter = (() => {
       return;
     }
     if (!node) return;
+    if (seq !== mountSeq) return; // #39 — a newer view mounted while building; don't overwrite it
 
     PromptUIManager.replacePanelMainContent(node);
     applyViewChrome(definition);
@@ -532,7 +536,7 @@ const PanelRouter = (() => {
 
   return { mount };
 })();
-window.PanelRouter = PanelRouter;
+if (!__PF_ALREADY_INITIALIZED) window.PanelRouter = PanelRouter; // #46 — keep first-injection instance on re-injection
 
 /* ---------------------------------------------------------------------------
  * [05] Centralized outside-click closer
@@ -696,10 +700,10 @@ class PromptStorageManager {
       try {
         await PromptStorageManager.addVersion(result.prompt.uuid, result.prompt.content, 'user_input');
       } catch {}
-      // Auto-suggest metadata for first-time saves
-      try {
-        await PromptUIManager.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`));
-      } catch {}
+      // COMMENT: #41 — fire auto-suggest asynchronously so savePrompt returns
+      // immediately; the Create form no longer blocks on the AI round-trip
+      // (which also let an impatient second click create a duplicate prompt).
+      PromptUIManager.autoSuggestMetadata(result.prompt.uuid, qs(`#${SELECTORS.PROMPT_LIST}`)).catch(() => {});
     }
     return result;
   }
@@ -789,7 +793,7 @@ class PromptStorageManager {
     return await PromptStorageManager.setData('tagsOrder', order);
   }
 }
-window.PromptStorageManager = PromptStorageManager;
+if (!__PF_ALREADY_INITIALIZED) window.PromptStorageManager = PromptStorageManager; // #46
 
 
 
@@ -1567,15 +1571,29 @@ class PromptUIManager {
           e.stopPropagation();
           const titleIn = form.querySelector('.opm-input-field');
           const contentArea = form.querySelector('.opm-textarea-field');
-          const catSel = form.querySelectorAll('.opm-input-field')[2]; // Third input is category select
+          // COMMENT: #9 — the .opm-input-field matches are [title, categorySelect,
+          // languageSelect] (the textarea uses .opm-textarea-field), so index [2]
+          // was the LANGUAGE select, corrupting category and dropping language.
+          // Pick the form's category/language selects explicitly, excluding the
+          // transient translate/fork pickers (which also carry .opm-input-field).
+          const formSelects = form.querySelectorAll('select:not(.opm-translate-pick):not(.opm-fork-pick)');
+          const catSel = formSelects[0];
+          const langSel = formSelects[1];
           const t = titleIn.value.trim(), c = contentArea.value.trim();
           if (!t || !c) { alert('Please fill in both title and content.'); return; }
-          const cat = catSel && catSel.tagName === 'SELECT' && catSel.value !== 'Uncategorized' ? catSel.value : null;
+          if (newBtn.disabled) return; // #47 — double-submit guard (replaces once:true)
+          newBtn.disabled = true;
+          const cat = catSel && catSel.value ? catSel.value : null;
+          const language = langSel
+            ? (langSel.value === 'auto' ? detectLanguage(c).code : langSel.value)
+            : undefined;
           const ps = await PromptStorageManager._ps();
           await PromptStorageManager.addVersion(prompt.uuid, c, 'manual_edit');
-          await ps.updatePrompt(prompt.uuid, { title: t, content: c, tags: tagInput.getTags(), category: cat });
+          const update = { title: t, content: c, tags: tagInput.getTags(), category: cat };
+          if (language !== undefined) update.language = language;
+          await ps.updatePrompt(prompt.uuid, update);
           PanelRouter.mount(PanelView.EDIT);
-        }, { once: true });
+        }); // #47 — no once:true; a validation failure must not kill the button
       }
       const listElAfter = qs(`#${SELECTORS.PROMPT_LIST}`);
       if (listElAfter) { PromptUIManager.showPromptList(listElAfter); PromptUIManager.setSearchVisibility(false); }
@@ -1690,8 +1708,10 @@ class PromptUIManager {
     let content = prompt.content;
     let language = prompt.language || null;
     if (toLang && toLang !== prompt.language) {
-      const { translateText } = await import(chrome.runtime.getURL('ai-operations.js'));
-      content = await translateText(prompt.content, toLang, prompt.language || null);
+      // COMMENT: #10 — use the statically imported translateText. The old
+      // dynamic import of chrome.runtime.getURL('ai-operations.js') rejected
+      // because that file is no longer web-accessible (it ships in the bundle).
+      content = await aiTranslateText(prompt.content, toLang, prompt.language || null);
       if (!content) return;
       language = toLang;
     }
@@ -1919,7 +1939,7 @@ class PromptUIManager {
   }
 }
 
-window.PromptUIManager = PromptUIManager;
+if (!__PF_ALREADY_INITIALIZED) window.PromptUIManager = PromptUIManager; // #46 — shared helpers keep the first closures
 
 if (typeof window.__initPromptShared === 'function') {
   window.__initPromptShared();
@@ -1933,7 +1953,10 @@ class PromptProcessor {
     return [...new Set([...content.matchAll(regex)].map(m => m[1]))];
   }
   static replaceVariables(content, values) {
-    return Object.entries(values).reduce((res, [k, v]) => res.replace(new RegExp(`#${k}#`, 'g'), v), content);
+    // COMMENT: #40 — use a replacer function so $&, $', $`, $1… in a variable
+    // value are inserted literally instead of being expanded as replacement
+    // patterns (which corrupted injected content).
+    return Object.entries(values).reduce((res, [k, v]) => res.replace(new RegExp(`#${k}#`, 'g'), () => v), content);
   }
 }
 
