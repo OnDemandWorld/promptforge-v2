@@ -232,9 +232,9 @@ async function renderLibrary(container, onNavigate) {
   search.addEventListener('input', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(loadPrompts, 200); });
   sortSelect.addEventListener('change', loadPrompts);
 
+  let loadSeq = 0; // #29 — declared before the first call (let is not hoisted like the function)
   await loadPrompts();
 
-  let loadSeq = 0; // #29 — sequence token to drop stale overlapping renders
   async function loadPrompts() {
     const seq = ++loadSeq;
     listArea.innerHTML = '';
